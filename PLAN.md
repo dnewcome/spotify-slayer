@@ -705,6 +705,69 @@ interface Track {
 
 ---
 
+## Local File Storage
+
+When downloaded FLAC/MP3 files exist on disk, the app serves them through a Next.js API
+route rather than requiring cloud storage. No S3, no upload latency, no cost.
+
+### File server
+
+```
+MUSIC_DIR=/Users/you/Music/DJ   ← .env
+GET /api/files/[...path]        ← streams file from MUSIC_DIR, path-sanitized
+```
+
+The route validates that the resolved path stays within `MUSIC_DIR` (no directory
+traversal), sets appropriate `Content-Type` for FLAC/MP3, and supports `Range` headers
+for Web Audio API streaming. Web Audio then fetches `http://127.0.0.1:3000/api/files/...`
+and plays or decodes the buffer.
+
+`localPath` on `TrackMetadata` stores the path. Design it to support both local and cloud:
+- Local: `music/Icarus/October.flac` (relative to `MUSIC_DIR`)
+- Cloud (future): `s3://bucket/Icarus/October.flac`
+
+Switching to DO Spaces or S3 later is a one-route change — same data model, swap
+`fs.createReadStream` for `s3.getObject`. DO Spaces is S3-compatible so the AWS SDK works
+unchanged.
+
+### Matching downloaded files to Spotify tracks
+
+When a file lands in the downloads folder, it needs to be linked to the right track in
+localStorage. Strategies in order of reliability:
+
+| Method | How | Reliability |
+|--------|-----|-------------|
+| ISRC tag in file | SoulSync writes MusicBrainz metadata; ISRC often present | High — direct match to `TrackMetadata.isrc` |
+| MusicBrainz ID tag | Same pipeline, different identifier | High |
+| Filename convention | `Artist - Title.flac` → fuzzy match | Medium — fails on special chars, remixes |
+| Manual link | "Link file" button opens file picker, stores path | Foolproof but tedious at scale |
+
+**Recommended approach:** scan `MUSIC_DIR` on startup (or on demand), read tags with
+`music-metadata` (Node.js), match by ISRC first, then MBID, then fuzzy title+artist. Store
+the matched `localPath` in localStorage. Show unmatched files in a "needs linking" view.
+
+### Tag reading
+
+`music-metadata` (npm) reads ID3v2, ID3v1, FLAC/Vorbis, and MP4 tags. Useful fields to
+extract and store in `TrackMetadata`:
+- `common.isrc` → match to existing track
+- `common.bpm` → populate `bpm` field
+- `common.key` → populate `key` field
+- `common.genre` → supplement MusicBrainz genres
+- `format.duration` → verify against Spotify duration
+- `format.codec`, `format.bitrate`, `format.sampleRate` → display in acquisition status
+
+### When to add cloud storage (DO Spaces / S3)
+
+Add object storage when:
+- You want the library on multiple machines (laptop + studio)
+- You want off-site backup
+- The tool becomes multi-user
+
+Not worth adding until the local file workflow is proven end-to-end.
+
+---
+
 ## Dev Notes
 
 - Dev server: `node node_modules/next/dist/bin/next dev --webpack` (SWC arm64 binary corrupted)
