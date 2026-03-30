@@ -119,6 +119,91 @@ markers and the tinted active region, then add other types.
 
 ---
 
+### Phase 2.6 — Transition Recording & Mix Match Score
+
+No live player in this app — the idea is to record transition data *while practicing* in
+your real DJ setup (hardware mixer, controller, or DAW), then import or manually annotate
+it here. Over time, the app builds up a library of "how well does track A mix into track B"
+data that can inform set planning.
+
+**What a transition is:**
+
+A transition connects the `out` cue of one track to the `in` cue of the next. It has a
+duration (overlap length) and optionally recorded automation — the sequence of EQ and fader
+moves made during the mix.
+
+```ts
+export interface TransitionAutomation {
+  timeMs: number;       // offset from transition start
+  channel: "fader_a" | "fader_b" | "crossfader" | "eq_hi_a" | "eq_mid_a" | "eq_lo_a"
+          | "eq_hi_b" | "eq_mid_b" | "eq_lo_b" | "filter_a" | "filter_b";
+  value: number;        // 0.0–1.0 normalized
+}
+
+export interface Transition {
+  id: string;
+  fromSlotId: string;       // track A (outgoing)
+  toSlotId: string;         // track B (incoming)
+  overlapMs: number;        // how long the two tracks overlap
+  bpmDelta?: number;        // tempo difference at transition point
+  keyCompatibility?: "same" | "relative" | "adjacent" | "clash";
+  automation: TransitionAutomation[];
+  matchScore?: number;      // 0–100, see below
+  notes?: string;
+  recordedAt?: string;      // ISO timestamp of the practice session
+}
+```
+
+**Mix match score:**
+
+A 0–100 score summarizing how well two specific tracks transition into each other based on
+accumulated practice data. Inputs to the score (all optional, weighted):
+
+| Factor | How it's measured |
+|--------|------------------|
+| Key compatibility | Camelot wheel distance between track keys |
+| BPM delta | Absolute difference in tempo at transition point |
+| EQ headroom | Whether EQ kills were needed to avoid muddiness (lo/hi cuts during overlap) |
+| Fader smoothness | Variance in the fader automation curve — jerky vs smooth |
+| User override | Manual "felt great" / "trainwreck" rating after the practice run |
+
+The score isn't computed automatically from audio analysis — it's built from structured
+annotations the user fills in (or imports) after a practice session. With enough transitions
+recorded, the app can surface "these two tracks have mixed well 3 times" vs "never attempted"
+vs "marked as trainwreck."
+
+**Recording flow (v1 — manual annotation):**
+
+1. User practices the transition in their DJ setup
+2. Opens the transition detail in the app
+3. Fills in: overlap duration, which EQ channels they killed, fader style (cut / slow fade /
+   quick fade), whether it worked
+4. App computes score from structured fields + user rating
+5. Score appears on the track row as a small indicator between adjacent tracks in the set
+
+**Recording flow (v2 — external input):**
+
+Future option: a small local sidecar (MIDI listener or audio interface input monitor) that
+watches controller MIDI output during a live practice session and logs the automation in
+real time, then POSTs it to a localhost endpoint the app exposes. This would give the full
+automation timeline without manual entry. Out of scope for now but worth keeping the data
+model compatible.
+
+**Where the score shows up:**
+
+- Between adjacent track rows in the set builder — a small "match" badge (green/yellow/red
+  or numeric) in the gap between track A and track B
+- In the arc bar — the join between two blocks could be colored by match score
+- On a future "transition library" page — searchable list of all recorded A→B transitions
+  across all sets, sortable by score, reusable when the same pair appears in a different set
+
+**Open questions:**
+- Best input format for importing automation from a DAW (MIDI CC log? CSV? rekordbox XML?)
+- Whether to show the automation curve as a mini sparkline on the transition detail view
+- How to handle transitions where BPM is matched via pitch shift vs tempo lock
+
+---
+
 ### Phase 3 — Set Structure & Arc
 
 Sets have named sections with target energy ranges. Tracks slot into sections.
