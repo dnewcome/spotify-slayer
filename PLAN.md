@@ -199,6 +199,28 @@ model compatible.
 
 **Open questions:**
 - Best input format for importing automation from a DAW (MIDI CC log? CSV? rekordbox XML?)
+
+#### rekordbox format notes
+
+rekordbox XML (`File → Export Collection in xml format`) is the practical interchange target.
+Cue points are `<POSITION_MARK>` elements on each `<TRACK>`:
+
+```xml
+<POSITION_MARK Name="Drop" Type="1" Start="64.000" Num="0" Red="255" Green="0" Blue="0" />
+```
+
+- `Start` is position in **seconds** (float) — multiply by 1000 to get our `positionMs`
+- `Type`: 0=memory cue, 1=hot cue, 2=fade-in, 3=fade-out, 4=load
+- `Num`: -1 for memory cues, 0–7 for hot cues
+- Color as RGB on hot cues
+
+The on-device binary format (`.DAT`/`.EXT` ANLZ files on Pioneer USB) is fully
+reverse-engineered by the Deep Symmetry project: https://djl-analysis.deepsymmetry.org
+Working libraries: `pyrekordbox` (Python), `rekordcrate` (Rust), `crate-digger` (Clojure).
+
+**Import path for Phase 2.5:** Parse rekordbox XML export → map `POSITION_MARK` entries to
+`CuePoint[]` on matching tracks (match by title+artist or ISRC if available in the XML).
+Export path: write `POSITION_MARK` elements back so cues round-trip into rekordbox/CDJs.
 - Whether to show the automation curve as a mini sparkline on the transition detail view
 - How to handle transitions where BPM is matched via pitch shift vs tempo lock
 
