@@ -47,9 +47,9 @@ export async function getCurrentTrack(accessToken: string) {
   return spotifyFetch("/me/player/currently-playing", accessToken);
 }
 
-export async function searchTracks(accessToken: string, query: string, limit = 20) {
+export async function searchTracks(accessToken: string, query: string) {
   const data = await spotifyFetch(
-    `/search?q=${encodeURIComponent(query)}&type=track&limit=${limit}`,
+    `/search?q=${encodeURIComponent(query)}&type=track&market=from_token`,
     accessToken
   );
   return data?.tracks?.items ?? [];
