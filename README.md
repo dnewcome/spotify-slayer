@@ -140,6 +140,7 @@ A few breaking changes hit during development that aren't well-documented yet:
 - Audio features endpoint (BPM, key, energy) — deprecated, no Web API replacement
 - Recommendations endpoint — deprecated
 - `localhost` redirect URIs — rejected as "Insecure", use `http://127.0.0.1`
+- Search `limit` parameter — now rejected as invalid; use `market=from_token` instead and omit `limit`
 
 ---
 
