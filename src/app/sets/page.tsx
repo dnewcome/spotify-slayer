@@ -3,15 +3,67 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { getSets, createSet, saveSet, deleteSet, totalDuration } from "@/lib/sets";
-import { DJSet } from "@/lib/types";
+import { getAllTrackMeta } from "@/lib/library";
+import { DJSet, DJSetTrack, TrackMetadata } from "@/lib/types";
+
+const UNTAGGED_COLOR = "#3f3f46";
+
+function trackColor(energy: number, busyness: number): string {
+  const hue = 220 - (energy - 1) * 55;
+  const sat = 50 + (busyness - 1) * 12;
+  const light = 35 + (busyness - 1) * 7;
+  return `hsl(${hue}, ${sat}%, ${light}%)`;
+}
+
+function resolveColor(meta?: TrackMetadata): string {
+  if (!meta?.energyLevel) return UNTAGGED_COLOR;
+  return trackColor(meta.energyLevel, meta.busyness ?? 1);
+}
+
+function SetArcMini({ tracks, library }: { tracks: DJSetTrack[]; library: Record<string, TrackMetadata> }) {
+  const total = tracks.reduce((acc, t) => acc + t.durationMs, 0);
+  if (total === 0 || tracks.length === 0) return null;
+  return (
+    <div className="flex h-2 rounded overflow-hidden gap-px mb-3">
+      {tracks.map((t) => (
+        <div
+          key={t.slotId ?? t.id}
+          title={t.name}
+          style={{
+            width: `${(t.durationMs / total) * 100}%`,
+            backgroundColor: resolveColor(library[t.id]),
+            minWidth: 2,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function setStats(set: DJSet, library: Record<string, TrackMetadata>) {
+  const tagged = set.tracks.filter((t) => library[t.id]?.energyLevel).length;
+  const genres: Record<string, number> = {};
+  for (const t of set.tracks) {
+    for (const g of library[t.id]?.genre ?? []) {
+      genres[g] = (genres[g] ?? 0) + 1;
+    }
+  }
+  const topGenres = Object.entries(genres)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([g]) => g);
+  return { tagged, topGenres };
+}
 
 export default function SetsPage() {
   const [sets, setSets] = useState<DJSet[]>([]);
+  const [library, setLibrary] = useState<Record<string, TrackMetadata>>({});
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
 
   useEffect(() => {
     setSets(getSets());
+    setLibrary(getAllTrackMeta());
   }, []);
 
   function handleCreate() {
@@ -78,41 +130,67 @@ export default function SetsPage() {
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {sets.map((s) => (
-            <div
-              key={s.id}
-              className="bg-zinc-900 rounded-xl p-4 border border-zinc-800 hover:border-zinc-600 transition-colors group"
-            >
-              <Link href={`/sets/${s.id}`} className="block mb-3">
-                <div className="font-semibold group-hover:text-green-400 transition-colors">
-                  {s.name}
-                </div>
-                {s.description && (
-                  <div className="text-sm text-zinc-400 mt-0.5 truncate">{s.description}</div>
+          {sets.map((s) => {
+            const { tagged, topGenres } = setStats(s, library);
+            return (
+              <div
+                key={s.id}
+                className="bg-zinc-900 rounded-xl p-4 border border-zinc-800 hover:border-zinc-600 transition-colors group"
+              >
+                <Link href={`/sets/${s.id}`} className="block mb-2">
+                  <div className="font-semibold group-hover:text-green-400 transition-colors truncate">
+                    {s.name}
+                  </div>
+                  {s.description && (
+                    <div className="text-sm text-zinc-400 mt-0.5 truncate">{s.description}</div>
+                  )}
+                </Link>
+
+                {s.tracks.length > 0 && (
+                  <SetArcMini tracks={s.tracks} library={library} />
                 )}
-              </Link>
-              <div className="flex items-center justify-between">
-                <div className="text-xs text-zinc-500">
-                  {s.tracks.length} tracks
-                  {s.tracks.length > 0 && ` · ${totalDuration(s.tracks)}`}
-                </div>
-                <div className="flex items-center gap-2">
-                  <Link
-                    href={`/sets/${s.id}`}
-                    className="text-xs text-zinc-400 hover:text-white transition-colors"
-                  >
-                    Edit
-                  </Link>
-                  <button
-                    onClick={() => handleDelete(s.id, s.name)}
-                    className="text-xs text-zinc-600 hover:text-red-400 transition-colors"
-                  >
-                    Delete
-                  </button>
+
+                {topGenres.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mb-3">
+                    {topGenres.map((g) => (
+                      <span key={g} className="text-xs bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded-full">
+                        {g}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between">
+                  <div className="text-xs text-zinc-500 flex items-center gap-2">
+                    <span>
+                      {s.tracks.length} {s.tracks.length === 1 ? "track" : "tracks"}
+                      {s.tracks.length > 0 && ` · ${totalDuration(s.tracks)}`}
+                    </span>
+                    {s.tracks.length > 0 && tagged < s.tracks.length && (
+                      <span className="text-zinc-600">{tagged}/{s.tracks.length} tagged</span>
+                    )}
+                    {s.tracks.length > 0 && tagged === s.tracks.length && (
+                      <span className="text-green-700">{tagged}/{s.tracks.length} tagged</span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Link
+                      href={`/sets/${s.id}`}
+                      className="text-xs text-zinc-400 hover:text-white transition-colors"
+                    >
+                      Edit
+                    </Link>
+                    <button
+                      onClick={() => handleDelete(s.id, s.name)}
+                      className="text-xs text-zinc-600 hover:text-red-400 transition-colors"
+                    >
+                      Delete
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
