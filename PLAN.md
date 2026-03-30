@@ -56,6 +56,69 @@ This app owns all five of those steps.
 
 See detailed implementation plan below.
 
+### Phase 2.5 — Cue Points & Track EDL
+
+Each track in a set can have a list of cue points stored in its `TrackMetadata`. Cue points
+mark specific moments in the track (by milliseconds from the start) and are displayed as a
+thin horizontal waveform-style bar on the track row — an EDL (Edit Decision List) view.
+
+**Cue point types:**
+
+| Type | Description |
+|------|-------------|
+| `in` | Where this track enters the mix — the actual playback start point |
+| `out` | Where this track exits — the end of its role in the set |
+| `drop` | Notable energy moment, breakdown, or section change worth remembering |
+| `info` | Freeform annotation — key change, vocal, build, etc. |
+| `loop` | A loopable section |
+| `megamix` | Overlap region where a second track plays simultaneously (mashup/megamix) |
+
+**Data model addition to `TrackMetadata`:**
+```ts
+export interface CuePoint {
+  id: string;           // UUID
+  type: "in" | "out" | "drop" | "info" | "loop" | "megamix";
+  positionMs: number;   // offset from track start
+  label?: string;       // optional freeform note
+  linkedSlotId?: string; // for megamix: the other track's slotId in the set
+}
+```
+
+**UI: Track EDL bar**
+
+A narrow horizontal bar (12–16px tall) under the track title, spanning the full row width.
+The bar represents the full track duration. Cue point markers are vertical lines or small
+triangles at the proportional position. Color-coded by type:
+
+- `in` / `out` — white brackets at the edges of the "active region"; the space between them
+  is tinted to show the portion of the track actually used in the set
+- `drop` — yellow tick mark
+- `info` — gray tick with tooltip label
+- `loop` — blue region
+- `megamix` — purple region, with a small reference to the linked track
+
+The in/out region shading also feeds back into the arc bar — block width should eventually
+reflect the `out - in` duration rather than the full track duration.
+
+**Megamix / mashup sections:**
+
+Two tracks with overlapping `megamix` cue regions and `linkedSlotId` pointing at each other.
+In the arc bar, the overlap region could show a blended or striped color from both tracks.
+In a future export, the EDL data could drive a real edit (e.g., passed to a DAW or to a
+`ffmpeg` concat manifest).
+
+**Input method:**
+
+Cue points are entered manually (type + time). Time input accepts either `mm:ss` or raw
+seconds. No audio playback in-app for v1 — user references the track in Spotify or their
+DAW, then records the timestamp here. A "preview in Spotify" deep link (`spotify:track:id`)
+can open the track at the right position if the Spotify client supports it.
+
+**Phase ordering note:** This can be added incrementally — start with just `in`/`out`
+markers and the tinted active region, then add other types.
+
+---
+
 ### Phase 3 — Set Structure & Arc
 
 Sets have named sections with target energy ranges. Tracks slot into sections.
