@@ -204,6 +204,128 @@ model compatible.
 
 ---
 
+### Phase 2.7 — Playback & Player Control
+
+No player exists today — the app is a pure sidecar to whatever Spotify client is running.
+But cue points and transition practice both eventually need *some* way to hear the track at
+a specific position. Three paths forward, not mutually exclusive:
+
+---
+
+#### Option A — Spotify Connect remote control
+
+Control the active Spotify player on any other device (desktop app, phone, speaker) via the
+Spotify Web API's player endpoints. No new player in the browser — just remote.
+
+```
+GET  /v1/me/player                  → current playback state, device list
+PUT  /v1/me/player/play             → play / resume, optionally seek to position_ms
+PUT  /v1/me/player/pause
+PUT  /v1/me/player/seek?position_ms=90000
+PUT  /v1/me/player/transfer         → move playback to a specific device
+```
+
+**Pros:**
+- Minimal work — auth is already wired, these are just additional API calls
+- Works with the existing Spotify client the user is already running
+- No Premium restriction beyond what Spotify already requires for playback
+- Seek to `position_ms` maps directly to cue point values
+
+**Cons:**
+- Requires an active Spotify session on another device — won't work standalone
+- Latency between button press and audio response
+- No waveform, no beat grid, no visual feedback
+- Useless once we're playing local FLAC files from the acquisition workflow
+
+**Best for:** Quick "jump to cue point" and "preview this section" while building a set,
+before local file acquisition is in place. Low-effort, high immediate value.
+
+---
+
+#### Option B — Spotify Web Playback SDK
+
+Embeds a full Spotify player *in the browser tab* as a new Spotify Connect device. Requires
+Spotify Premium. Gives full playback control including `seek()`, `getCurrentState()` for
+position polling, and event listeners for track changes.
+
+```ts
+const player = new Spotify.Player({ name: "Spotify Slayer", getOAuthToken: ... });
+player.seek(positionMs);
+player.getCurrentState(); // → { position, duration, track_window }
+```
+
+**Pros:**
+- Self-contained — no external device needed
+- Position polling enables real-time playhead visualization over the EDL bar
+- Can trigger playback from the app without switching windows
+- Integrates naturally with cue point "play from here" buttons
+
+**Cons:**
+- Requires Spotify Premium
+- SDK is a black box; Spotify has a history of breaking/restricting it
+- Still useless for local FLAC files post-acquisition
+
+**Best for:** In-app preview and cue point verification while tracks are still Spotify-only.
+Worth adding after Connect remote control, as a step up in UX.
+
+---
+
+#### Option C — Web Audio API (local file playback)
+
+Load acquired FLAC/MP3 files directly into the browser via `AudioContext`. No Spotify
+dependency. Enables waveform rendering, beat detection, and — crucially — Web MIDI API
+integration for the transition automation recording feature (Phase 2.6 v2).
+
+```ts
+const ctx = new AudioContext();
+const source = ctx.createBufferSource();
+source.buffer = await ctx.decodeAudioData(arrayBuffer);
+source.connect(ctx.destination);
+source.start(0, offsetSeconds);   // play from cue point
+```
+
+**Pros:**
+- Works for local files — the endgame once acquisition is in place
+- Can render a real waveform from the decoded audio buffer
+- Web MIDI API in the same browser context → could listen to MIDI CC from a controller
+  and record transition automation natively (the Phase 2.6 v2 sidecar, built-in)
+- Full control — no SDK restrictions, no Premium requirement
+
+**Cons:**
+- Only useful after files are acquired locally
+- Decoding large FLACs in the browser is CPU-intensive; may want to pre-decode or stream
+- CORS and local file access require either a file picker or a local HTTP server for the
+  files directory
+- No Spotify integration — can't play "want" tracks that aren't acquired yet
+
+**Best for:** The acquisition-complete workflow. Pairs with the EDL bar and transition
+recording. This is the long-term answer.
+
+---
+
+#### Recommended phasing
+
+| Phase | Feature | Approach |
+|-------|---------|----------|
+| Near term | "Play from cue" button, preview in Spotify | Connect remote control (Option A) |
+| Medium term | In-app preview without switching apps | Web Playback SDK (Option B) |
+| Post-acquisition | Local file playback, waveform, MIDI recording | Web Audio API (Option C) |
+
+Options A and B are complementary — A works for anyone, B upgrades the experience for
+Premium users. Option C replaces B for acquired tracks and adds capabilities that B can
+never have. All three can coexist: play via Web Audio if a local file exists, fall back to
+SDK/Connect if not.
+
+**Open questions:**
+- Does the Web Playback SDK still work reliably as of 2026? (Worth checking changelog —
+  Spotify has been deprecating APIs aggressively)
+- For Web Audio + MIDI: browser MIDI access requires HTTPS or localhost — fine for dev,
+  needs consideration for any hosted version
+- File serving for local FLACs: local HTTP server (e.g. the Next.js dev server with a
+  `/files` static route) vs. browser File System Access API (`showOpenFilePicker`)
+
+---
+
 ### Phase 3 — Set Structure & Arc
 
 Sets have named sections with target energy ranges. Tracks slot into sections.
