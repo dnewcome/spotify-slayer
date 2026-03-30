@@ -21,8 +21,8 @@ function resolveColor(meta?: TrackMetadata): string {
 }
 
 function SetArcMini({ tracks, library }: { tracks: DJSetTrack[]; library: Record<string, TrackMetadata> }) {
-  const total = tracks.reduce((acc, t) => acc + activeDurationMs(t), 0);
-  if (total === 0 || tracks.length === 0) return null;
+  const program = tracks.reduce((acc, t) => acc + activeDurationMs(t), 0);
+  if (program === 0 || tracks.length === 0) return null;
   return (
     <div className="flex h-2 rounded overflow-hidden gap-px mb-3">
       {tracks.map((t) => (
@@ -30,7 +30,7 @@ function SetArcMini({ tracks, library }: { tracks: DJSetTrack[]; library: Record
           key={t.slotId ?? t.id}
           title={t.name}
           style={{
-            width: `${(activeDurationMs(t) / total) * 100}%`,
+            width: `${(activeDurationMs(t) / program) * 100}%`,
             backgroundColor: resolveColor(library[t.id]),
             minWidth: 2,
           }}
@@ -163,7 +163,7 @@ export default function SetsPage() {
                   <div className="text-xs text-zinc-500 flex items-center gap-2">
                     <span>
                       {s.tracks.length} {s.tracks.length === 1 ? "track" : "tracks"}
-                      {s.tracks.length > 0 && ` · ${totalDuration(s.tracks)} total`}
+                      {s.tracks.length > 0 && ` · ${totalDuration(s.tracks)} program`}
                       {s.tracks.length > 0 && hasInOutPoints(s.tracks) && ` · ${onAirDuration(s.tracks)} on air`}
                     </span>
                     {s.tracks.length > 0 && tagged < s.tracks.length && (

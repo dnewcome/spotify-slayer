@@ -153,13 +153,13 @@ function SetArcBar({
   library: Record<string, TrackMetadata>;
   selectedSlotId?: string;
 }) {
-  const total = tracks.reduce((acc, t) => acc + activeDurationMs(t), 0);
-  if (total === 0 || tracks.length === 0) return null;
+  const program = tracks.reduce((acc, t) => acc + activeDurationMs(t), 0);
+  if (program === 0 || tracks.length === 0) return null;
 
   // Precompute cumulative left offsets for the selection overlay
   let cursor = 0;
   const positions = tracks.map((t) => {
-    const widthPct = (activeDurationMs(t) / total) * 100;
+    const widthPct = (activeDurationMs(t) / program) * 100;
     const leftPct = cursor;
     cursor += widthPct;
     return { slotId: t.slotId, widthPct, leftPct };
@@ -173,7 +173,7 @@ function SetArcBar({
           {tracks.map((t) => {
             const meta = library[t.id];
             const color = resolveColor(meta);
-            const widthPct = (activeDurationMs(t) / total) * 100;
+            const widthPct = (activeDurationMs(t) / program) * 100;
             const label = meta?.energyLevel
               ? `${t.name} — E:${meta.energyLevel} B:${meta.busyness ?? "?"}`
               : `${t.name} — untagged`;
@@ -552,7 +552,7 @@ export default function SetBuilderPage({ params }: Props) {
           )}
           <div className="text-sm text-zinc-500 mt-1">
             {set.tracks.length} {set.tracks.length === 1 ? "track" : "tracks"}
-            {set.tracks.length > 0 && ` · ${totalDuration(set.tracks)} total`}
+            {set.tracks.length > 0 && ` · ${totalDuration(set.tracks)} program`}
             {set.tracks.length > 0 && hasInOutPoints(set.tracks) && (
               <span className="text-zinc-400"> · {onAirDuration(set.tracks)} on air</span>
             )}
