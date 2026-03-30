@@ -133,18 +133,17 @@ export default function SetsPage() {
           {sets.map((s) => {
             const { tagged, topGenres } = setStats(s, library);
             return (
-              <div
+              <Link
                 key={s.id}
-                className="bg-zinc-900 rounded-xl p-4 border border-zinc-800 hover:border-zinc-600 transition-colors group"
+                href={`/sets/${s.id}`}
+                className="block bg-zinc-900 rounded-xl p-4 border border-zinc-800 hover:border-zinc-600 transition-colors group cursor-pointer"
               >
-                <Link href={`/sets/${s.id}`} className="block mb-2">
-                  <div className="font-semibold group-hover:text-green-400 transition-colors truncate">
-                    {s.name}
-                  </div>
-                  {s.description && (
-                    <div className="text-sm text-zinc-400 mt-0.5 truncate">{s.description}</div>
-                  )}
-                </Link>
+                <div className="font-semibold group-hover:text-green-400 transition-colors truncate mb-2">
+                  {s.name}
+                </div>
+                {s.description && (
+                  <div className="text-sm text-zinc-400 mb-2 truncate">{s.description}</div>
+                )}
 
                 {s.tracks.length > 0 && (
                   <SetArcMini tracks={s.tracks} library={library} />
@@ -173,22 +172,14 @@ export default function SetsPage() {
                       <span className="text-green-700">{tagged}/{s.tracks.length} tagged</span>
                     )}
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Link
-                      href={`/sets/${s.id}`}
-                      className="text-xs text-zinc-400 hover:text-white transition-colors"
-                    >
-                      Edit
-                    </Link>
-                    <button
-                      onClick={() => handleDelete(s.id, s.name)}
-                      className="text-xs text-zinc-600 hover:text-red-400 transition-colors"
-                    >
-                      Delete
-                    </button>
-                  </div>
+                  <button
+                    onClick={(e) => { e.preventDefault(); handleDelete(s.id, s.name); }}
+                    className="text-xs text-zinc-600 hover:text-red-400 transition-colors"
+                  >
+                    Delete
+                  </button>
                 </div>
-              </div>
+              </Link>
             );
           })}
         </div>
