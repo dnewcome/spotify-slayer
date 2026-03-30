@@ -18,6 +18,8 @@ export interface DJSetTrack {
   durationMs: number;
   addedAt: string;
   isrc?: string;
+  inPoint?: number;   // ms from track start — where this track enters the mix
+  outPoint?: number;  // ms from track start — where this track exits the mix
 }
 
 export interface TrackMetadata {

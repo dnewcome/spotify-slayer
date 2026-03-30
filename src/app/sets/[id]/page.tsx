@@ -19,7 +19,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { getSet, saveSet, deleteSet, totalDuration, formatDuration } from "@/lib/sets";
+import { getSet, saveSet, deleteSet, totalDuration, onAirDuration, hasInOutPoints, activeDurationMs, formatDuration } from "@/lib/sets";
 import { getAllTrackMeta, setTrackMeta } from "@/lib/library";
 import { DJSet, DJSetTrack, TrackMetadata } from "@/lib/types";
 import Link from "next/link";
@@ -76,6 +76,72 @@ function DotSelector({
   );
 }
 
+// ── In/Out point input ────────────────────────────────────────────────────────
+
+function parseMmSs(s: string): number | undefined {
+  const m = s.trim().match(/^(\d+):(\d{2})$/);
+  if (!m) return undefined;
+  return (parseInt(m[1]) * 60 + parseInt(m[2])) * 1000;
+}
+
+function formatMmSs(ms: number): string {
+  const s = Math.round(ms / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+function InOutInput({
+  value,
+  placeholder,
+  onCommit,
+}: {
+  value?: number;
+  placeholder: string;
+  onCommit: (ms: number | undefined) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState("");
+
+  function commit() {
+    const trimmed = text.trim();
+    onCommit(trimmed === "" ? undefined : parseMmSs(trimmed));
+    setEditing(false);
+  }
+
+  if (!editing) {
+    return (
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          setText(value !== undefined ? formatMmSs(value) : "");
+          setEditing(true);
+        }}
+        className="text-xs font-mono w-10 text-center text-zinc-600 hover:text-zinc-300 transition-colors"
+        title={placeholder === "in" ? "In point (mm:ss)" : "Out point (mm:ss)"}
+      >
+        {value !== undefined ? formatMmSs(value) : <span className="text-zinc-800">{placeholder}</span>}
+      </button>
+    );
+  }
+
+  return (
+    <input
+      autoFocus
+      type="text"
+      value={text}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") commit();
+        if (e.key === "Escape") setEditing(false);
+        e.stopPropagation();
+      }}
+      onClick={(e) => e.stopPropagation()}
+      className="text-xs font-mono w-10 text-center bg-zinc-800 border border-zinc-600 rounded px-1 focus:outline-none focus:border-green-500"
+      placeholder="0:00"
+    />
+  );
+}
+
 // ── Arc bar ───────────────────────────────────────────────────────────────────
 
 function SetArcBar({
@@ -87,13 +153,13 @@ function SetArcBar({
   library: Record<string, TrackMetadata>;
   selectedSlotId?: string;
 }) {
-  const total = tracks.reduce((acc, t) => acc + t.durationMs, 0);
+  const total = tracks.reduce((acc, t) => acc + activeDurationMs(t), 0);
   if (total === 0 || tracks.length === 0) return null;
 
   // Precompute cumulative left offsets for the selection overlay
   let cursor = 0;
   const positions = tracks.map((t) => {
-    const widthPct = (t.durationMs / total) * 100;
+    const widthPct = (activeDurationMs(t) / total) * 100;
     const leftPct = cursor;
     cursor += widthPct;
     return { slotId: t.slotId, widthPct, leftPct };
@@ -107,7 +173,7 @@ function SetArcBar({
           {tracks.map((t) => {
             const meta = library[t.id];
             const color = resolveColor(meta);
-            const widthPct = (t.durationMs / total) * 100;
+            const widthPct = (activeDurationMs(t) / total) * 100;
             const label = meta?.energyLevel
               ? `${t.name} — E:${meta.energyLevel} B:${meta.busyness ?? "?"}`
               : `${t.name} — untagged`;
@@ -179,6 +245,7 @@ function SortableTrackRow({
   onSelect,
   onRemove,
   onMetaChange,
+  onTrackChange,
 }: {
   track: DJSetTrack;
   index: number;
@@ -186,8 +253,9 @@ function SortableTrackRow({
   isEnriching?: boolean;
   isSelected?: boolean;
   onSelect: (slotId: string) => void;
-  onRemove: (id: string) => void;
+  onRemove: (slotId: string) => void;
   onMetaChange: (id: string, patch: Partial<TrackMetadata>) => void;
+  onTrackChange: (slotId: string, patch: Partial<DJSetTrack>) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: track.slotId });
@@ -261,9 +329,22 @@ function SortableTrackRow({
           )}
         </div>
 
-        {/* Duration */}
-        <div className="text-xs text-zinc-600 flex-shrink-0">
-          {formatDuration(track.durationMs)}
+        {/* Duration + in/out */}
+        <div className="flex items-center gap-1 flex-shrink-0">
+          <div className="text-xs text-zinc-600 w-9 text-right">
+            {formatDuration(track.durationMs)}
+          </div>
+          <InOutInput
+            value={track.inPoint}
+            placeholder="in"
+            onCommit={(ms) => onTrackChange(track.slotId, { inPoint: ms })}
+          />
+          <span className="text-zinc-700 text-xs">–</span>
+          <InOutInput
+            value={track.outPoint}
+            placeholder="out"
+            onCommit={(ms) => onTrackChange(track.slotId, { outPoint: ms })}
+          />
         </div>
 
         {/* Energy selector */}
@@ -387,6 +468,11 @@ export default function SetBuilderPage({ params }: Props) {
     setLibrary(getAllTrackMeta());
   }
 
+  function handleTrackChange(slotId: string, patch: Partial<DJSetTrack>) {
+    if (!set) return;
+    persist({ ...set, tracks: set.tracks.map((t) => t.slotId === slotId ? { ...t, ...patch } : t) });
+  }
+
   function handleDragEnd(event: DragEndEvent) {
     if (!set) return;
     const { active, over } = event;
@@ -465,8 +551,11 @@ export default function SetBuilderPage({ params }: Props) {
             </h1>
           )}
           <div className="text-sm text-zinc-500 mt-1">
-            {set.tracks.length} tracks
-            {set.tracks.length > 0 && ` · ${totalDuration(set.tracks)}`}
+            {set.tracks.length} {set.tracks.length === 1 ? "track" : "tracks"}
+            {set.tracks.length > 0 && ` · ${totalDuration(set.tracks)} total`}
+            {set.tracks.length > 0 && hasInOutPoints(set.tracks) && (
+              <span className="text-zinc-400"> · {onAirDuration(set.tracks)} on air</span>
+            )}
           </div>
         </div>
         <button
@@ -519,6 +608,7 @@ export default function SetBuilderPage({ params }: Props) {
                   onSelect={(slotId) => setSelectedSlotId((prev) => prev === slotId ? undefined : slotId)}
                   onRemove={removeTrack}
                   onMetaChange={handleMetaChange}
+                  onTrackChange={handleTrackChange}
                 />
               ))}
             </div>

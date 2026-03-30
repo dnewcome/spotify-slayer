@@ -66,3 +66,19 @@ export function totalDuration(tracks: DJSetTrack[]): string {
   if (hours > 0) return `${hours}h ${minutes}m`;
   return `${minutes}m`;
 }
+
+export function activeDurationMs(track: DJSetTrack): number {
+  return Math.max(0, (track.outPoint ?? track.durationMs) - (track.inPoint ?? 0));
+}
+
+export function onAirDuration(tracks: DJSetTrack[]): string {
+  const total = tracks.reduce((acc, t) => acc + activeDurationMs(t), 0);
+  const hours = Math.floor(total / 3600000);
+  const minutes = Math.floor((total % 3600000) / 60000);
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
+}
+
+export function hasInOutPoints(tracks: DJSetTrack[]): boolean {
+  return tracks.some((t) => t.inPoint !== undefined || t.outPoint !== undefined);
+}
