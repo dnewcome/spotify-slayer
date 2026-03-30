@@ -118,7 +118,7 @@ function InOutInput({
         className="text-xs font-mono w-10 text-center text-zinc-600 hover:text-zinc-300 transition-colors"
         title={placeholder === "in" ? "In point (mm:ss)" : "Out point (mm:ss)"}
       >
-        {value !== undefined ? formatMmSs(value) : <span className="text-zinc-800">{placeholder}</span>}
+        {value !== undefined ? formatMmSs(value) : <span className="text-zinc-600">{placeholder}</span>}
       </button>
     );
   }
