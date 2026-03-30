@@ -95,6 +95,51 @@ The bridge between "I want this track" (Spotify discovery) and "I have this file
 - Longer term: sidecar local process (slskd/Nicotine+ headless) exposing a REST API on
   localhost; Next.js routes call it to search and trigger downloads in-app
 
+#### Research: SoulSync integration
+
+https://github.com/Nezreka/SoulSync — self-hosted music automation platform worth
+evaluating as the download sidecar. Key findings:
+
+**What it does:** Connects Spotify discovery to file acquisition. Given a track, it searches
+Soulseek (via slskd) and YouTube, downloads FLAC or MP3, enriches metadata (MusicBrainz,
+iTunes, Beatport, Genius), organizes files, and optionally scrobbles to Last.fm. Also
+handles playlist automation (Release Radar, Discovery Weekly, genre/mood-based playlists).
+
+**Stack:** Python 3.11 Flask backend, vanilla JS frontend, SQLite, ~80 REST endpoints,
+runs on localhost:8008. Deploy via Docker or native Python.
+
+**Integration path:** REST API. SoulSync runs as a separate service; Spotify Slayer calls
+its endpoints to trigger downloads and query status. No need to touch its internals.
+
+**What it requires:**
+- A running slskd instance (Soulseek headless client) — separate setup
+- Spotify API credentials (same ones we already have)
+- Storage path for downloaded files
+- Optional: Tidal/Qobuz/Deezer API credentials for higher-quality sources
+
+**What it solves for us:**
+- Automated FLAC/MP3 download from Soulseek without manual search
+- YouTube fallback if Soulseek has no results
+- Metadata enrichment already handled (overlaps with our MusicBrainz work, but covers
+  Beatport genre/BPM data we don't have yet)
+- File organization
+
+**Open questions before committing:**
+1. Does slskd expose enough of the Soulseek search results to pick the best file
+   (bitrate, format, file size)? Or does SoulSync auto-pick?
+2. Can we trigger a download for a specific Spotify track ID / ISRC and get back a
+   file path, or does it only work in bulk playlist mode?
+3. How actively maintained is SoulSync? (Check last commit date, open issues)
+4. Licensing — is it MIT/open? Any restrictions on embedding or calling its API?
+5. Does the slskd setup require sharing files back to the Soulseek network? (Upload
+   requirement to avoid bans — relevant if running on a home machine)
+
+**Alternatives if SoulSync doesn't fit:**
+- Call slskd's own REST API directly (slskd has a documented API) — more work but
+  gives full control over search result selection
+- lidarr + slskd (arr-stack) — heavier, media-server oriented, but battle-tested
+- spotDL — Python CLI, downloads from YouTube Music, simpler but lower quality ceiling
+
 ---
 
 ## Phase 2 — Detailed Implementation Plan
