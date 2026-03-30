@@ -52,7 +52,7 @@ export async function searchTracks(accessToken: string, query: string, limit = 2
     `/search?q=${encodeURIComponent(query)}&type=track&limit=${limit}`,
     accessToken
   );
-  return data.tracks.items;
+  return data?.tracks?.items ?? [];
 }
 
 export async function createPlaylist(

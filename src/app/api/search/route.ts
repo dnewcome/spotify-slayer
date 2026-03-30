@@ -10,6 +10,11 @@ export async function GET(req: NextRequest) {
   }
   const q = req.nextUrl.searchParams.get("q") ?? "";
   if (!q.trim()) return NextResponse.json({ tracks: [] });
-  const tracks = await searchTracks(session.accessToken, q);
-  return NextResponse.json({ tracks });
+  try {
+    const tracks = await searchTracks(session.accessToken, q);
+    return NextResponse.json({ tracks });
+  } catch (e) {
+    console.error("[search]", e);
+    return NextResponse.json({ error: "search_failed", tracks: [] }, { status: 500 });
+  }
 }
