@@ -485,6 +485,60 @@ SLSKD_API_KEY=<generate with: openssl rand -base64 48>
 MUSIC_DIR=/path/to/slskd/downloads   # or wherever files land
 ```
 
+#### Auth: API key vs JWT
+
+Two options — decide later:
+
+- **API key** (preferred for app use): add to `slskd.yml` under `web > authentication > api_keys`,
+  send as `X-API-Key: <key>` header. No expiry to manage.
+- **JWT** (works with default config): `POST /api/v0/session` with `{"username","password"}`,
+  use returned `token` as `Authorization: Bearer <token>`. Token expires — would need refresh logic.
+
+Default credentials are `slskd:slskd`. The config at
+`~/.local/share/slskd/slskd.yml` has the Soulseek username/password separate from the
+web UI credentials.
+
+#### Confirmed API behavior (from live testing)
+
+Tested against slskd v0.24.5, connected and logged in to Soulseek network.
+
+**Search:**
+- `POST /api/v0/searches` body: `{ searchText, fileLimit, responseLimit, searchTimeout }`
+  - `searchTimeout` is in milliseconds; 10000 (10s) gives good results
+  - `responseLimit` caps the number of peers that respond (not files); 10 peers → 40+ files typical
+- Response immediately returns `{ id, state: "InProgress", responseCount: 0, responses: [] }`
+- Poll `GET /api/v0/searches/:id?includeResponses=true` — **`includeResponses=true` is required**,
+  responses array is always empty without it even after completion
+- Poll until `state` starts with `"Completed"` — state can be `"Completed"` or
+  `"Completed, ResponseLimitReached"` — check with `startsWith`, not exact match
+- Can force-stop early: `PUT /api/v0/searches/:id` body `{ "state": "Stopped" }`
+
+**Search result shape:**
+```json
+{
+  "responses": [{
+    "username": "someuser",
+    "files": [{
+      "filename": "\\path\\to\\Artist - Title.flac",
+      "size": 31615484,
+      "bitRate": null,       // null for FLAC — slskd doesn't decode container metadata
+      "sampleRate": null,
+      "bitDepth": null,
+      "length": null
+    }]
+  }]
+}
+```
+`bitRate` is null for FLACs — use `size` to distinguish quality (FLACs are typically 25–90MB
+for a single track). MP3 320kbps results do return `bitRate: 320`. Filter out non-audio
+extensions (`.lrc`, `.jpg`, `.nfo`, `.cue`) by checking filename extension.
+
+**Sorting results:** FLAC first (by size desc), then MP3 by bitRate desc, then everything else.
+
+**Download endpoint:** not yet tested — to be confirmed:
+- `POST /api/v0/transfers/downloads/{username}/{filename}` body: `{ size }`
+- `GET /api/v0/transfers/downloads` returns all downloads with state and progress
+
 ---
 
 ## Phase 2 — Implementation Notes (completed)
