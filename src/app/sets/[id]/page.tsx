@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useEffect, useState } from "react";
+import { use, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   DndContext,
@@ -22,6 +22,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { getSet, saveSet, deleteSet, totalDuration, onAirDuration, hasInOutPoints, activeDurationMs, formatDuration } from "@/lib/sets";
 import { getAllTrackMeta, setTrackMeta } from "@/lib/library";
 import { DJSet, DJSetTrack, TrackMetadata } from "@/lib/types";
+import { useSpotifyPlayer } from "@/lib/useSpotifyPlayer";
 import Link from "next/link";
 
 interface Props {
@@ -242,21 +243,28 @@ function SortableTrackRow({
   metadata,
   isEnriching,
   isSelected,
+  isPlaying,
+  playerEnabled,
   onSelect,
   onRemove,
   onMetaChange,
   onTrackChange,
+  onPlay,
 }: {
   track: DJSetTrack;
   index: number;
   metadata?: TrackMetadata;
   isEnriching?: boolean;
   isSelected?: boolean;
+  isPlaying?: boolean;
+  playerEnabled?: boolean;
   onSelect: (slotId: string) => void;
   onRemove: (slotId: string) => void;
   onMetaChange: (id: string, patch: Partial<TrackMetadata>) => void;
   onTrackChange: (slotId: string, patch: Partial<DJSetTrack>) => void;
+  onPlay?: (track: DJSetTrack) => void;
 }) {
+  const [tagInput, setTagInput] = useState("");
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: track.slotId });
 
@@ -268,8 +276,21 @@ function SortableTrackRow({
 
   const color = resolveColor(metadata);
 
+  function addTag(raw: string) {
+    const val = raw.trim().replace(/,+$/, "");
+    if (!val) return;
+    const newTags = [...new Set([...(metadata?.tags ?? []), val])];
+    onMetaChange(track.id, { tags: newTags });
+    setTagInput("");
+  }
+
+  function removeTag(tag: string) {
+    onMetaChange(track.id, { tags: (metadata?.tags ?? []).filter((t) => t !== tag) });
+  }
+
   return (
-    <div ref={setNodeRef} style={style} className="flex items-center gap-2 group">
+    <div ref={setNodeRef} style={style} className="flex flex-col group">
+      <div className="flex items-center gap-2">
       {/* Energy color stripe */}
       <div
         className="w-1 self-stretch rounded-full flex-shrink-0 transition-colors"
@@ -293,6 +314,21 @@ function SortableTrackRow({
           ⠿
         </span>
 
+        {/* Play button (only when player enabled) */}
+        {playerEnabled && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onPlay?.(track); }}
+            className={`flex-shrink-0 text-xs w-5 h-5 flex items-center justify-center rounded-full transition-colors ${
+              isPlaying
+                ? "text-green-400 bg-green-950 border border-green-700"
+                : "text-zinc-600 hover:text-green-400"
+            }`}
+            title="Play from in point"
+          >
+            {isPlaying ? "▶" : "▷"}
+          </button>
+        )}
+
         {/* Track number */}
         <span className="w-5 text-right text-xs text-zinc-600 flex-shrink-0">
           {index + 1}
@@ -315,18 +351,21 @@ function SortableTrackRow({
           {isEnriching && (
             <div className="text-xs text-zinc-600 animate-pulse">looking up…</div>
           )}
-          {!isEnriching && metadata?.genre && metadata.genre.length > 0 && (
-            <div className="flex gap-1 mt-0.5 flex-wrap">
-              {metadata.genre.slice(0, 3).map((g) => (
-                <span
-                  key={g}
-                  className="text-xs px-1.5 py-0 rounded bg-zinc-800 text-zinc-400 border border-zinc-700"
-                >
-                  {g}
-                </span>
-              ))}
-            </div>
-          )}
+          {!isEnriching && (() => {
+            const allTags = [...new Set([...(metadata?.genre ?? []), ...(metadata?.tags ?? [])])];
+            return allTags.length > 0 ? (
+              <div className="flex gap-1 mt-0.5 flex-wrap">
+                {allTags.slice(0, 4).map((g) => (
+                  <span
+                    key={g}
+                    className="text-xs px-1.5 py-0 rounded bg-zinc-800 text-zinc-400 border border-zinc-700"
+                  >
+                    {g}
+                  </span>
+                ))}
+              </div>
+            ) : null;
+          })()}
         </div>
 
         {/* Duration + in/out */}
@@ -371,6 +410,181 @@ function SortableTrackRow({
           ×
         </button>
       </div>
+      </div>{/* end row */}
+
+      {/* Tag editor — shown when selected */}
+      {isSelected && (
+        <div
+          className="ml-3 flex flex-wrap gap-1 items-center px-2 py-1.5 border-x border-b border-zinc-600 rounded-b-lg bg-zinc-800"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {(metadata?.tags ?? []).map((tag) => (
+            <span
+              key={tag}
+              className="flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-zinc-700 text-zinc-300 border border-zinc-600"
+            >
+              {tag}
+              <button
+                onClick={() => removeTag(tag)}
+                className="text-zinc-500 hover:text-red-400 leading-none"
+              >
+                ×
+              </button>
+            </span>
+          ))}
+          <input
+            type="text"
+            value={tagInput}
+            placeholder="add tag…"
+            onChange={(e) => setTagInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === ",") {
+                e.preventDefault();
+                addTag(tagInput);
+              }
+              e.stopPropagation();
+            }}
+            className="text-xs bg-transparent border-b border-zinc-600 focus:border-zinc-400 focus:outline-none px-1 py-0.5 text-zinc-300 placeholder-zinc-600 w-24"
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Player bar ────────────────────────────────────────────────────────────────
+
+function PlayerBar({
+  tracks,
+  playingSlotId,
+  playerState,
+  isReady,
+  onPlayTrack,
+  onPause,
+  onResume,
+  onSetIn,
+  onSetOut,
+  onSeek,
+}: {
+  tracks: DJSetTrack[];
+  playingSlotId: string | null;
+  playerState: ReturnType<typeof useSpotifyPlayer>["playerState"];
+  isReady: boolean;
+  onPlayTrack: (track: DJSetTrack) => void;
+  onPause: () => void;
+  onResume: () => void;
+  onSetIn: () => void;
+  onSetOut: () => void;
+  onSeek: (ms: number) => void;
+}) {
+  if (!isReady) return null;
+
+  const playingTrack = tracks.find((t) => t.slotId === playingSlotId);
+  const paused = !playerState || playerState.paused;
+  const position = playerState?.position ?? 0;
+  const outPoint = playingTrack?.outPoint ?? playingTrack?.durationMs ?? 0;
+  const inPoint = playingTrack?.inPoint ?? 0;
+  const activeRange = outPoint - inPoint;
+  const progressPct = activeRange > 0 ? Math.min(100, ((position - inPoint) / activeRange) * 100) : 0;
+
+  const idx = playingSlotId ? tracks.findIndex((t) => t.slotId === playingSlotId) : -1;
+  const prevTrack = idx > 0 ? tracks[idx - 1] : null;
+  const nextTrack = idx >= 0 && idx < tracks.length - 1 ? tracks[idx + 1] : null;
+
+  return (
+    <div className="sticky bottom-0 mt-6 bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-3 flex flex-col gap-2">
+      {/* Progress bar — click to seek */}
+      <div
+        className="h-3 flex items-center cursor-pointer group"
+        onClick={(e) => {
+          if (!playingTrack) return;
+          const rect = e.currentTarget.getBoundingClientRect();
+          const pct = (e.clientX - rect.left) / rect.width;
+          const inPoint = playingTrack.inPoint ?? 0;
+          const outPoint = playingTrack.outPoint ?? playingTrack.durationMs;
+          onSeek(Math.round(inPoint + pct * (outPoint - inPoint)));
+        }}
+      >
+        <div className="h-1 group-hover:h-2 transition-all bg-zinc-700 rounded-full overflow-hidden w-full">
+          <div
+            className="h-full bg-green-500 rounded-full"
+            style={{ width: `${progressPct}%` }}
+          />
+        </div>
+      </div>
+
+      <div className="flex items-center gap-3">
+        {/* Track info */}
+        <div className="flex-1 min-w-0">
+          {playingTrack ? (
+            <>
+              <div className="text-sm font-medium truncate">{playingTrack.name}</div>
+              <div className="text-xs text-zinc-400 truncate">{playingTrack.artists.join(", ")}</div>
+            </>
+          ) : (
+            <div className="text-sm text-zinc-500">No track playing</div>
+          )}
+        </div>
+
+        {/* Position */}
+        {playingTrack && (
+          <div className="text-xs font-mono text-zinc-400 flex-shrink-0">
+            {formatMmSs(position)} / {formatMmSs(outPoint)}
+          </div>
+        )}
+
+        {/* Set In / Set Out */}
+        {playingTrack && (
+          <>
+            <button
+              onClick={onSetIn}
+              title="Set in point to current position"
+              className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-600 flex-shrink-0"
+            >
+              [in
+            </button>
+            <button
+              onClick={onSetOut}
+              title="Set out point to current position"
+              className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-600 flex-shrink-0"
+            >
+              out]
+            </button>
+          </>
+        )}
+
+        {/* Prev */}
+        <button
+          onClick={() => prevTrack && onPlayTrack(prevTrack)}
+          disabled={!prevTrack}
+          className="text-zinc-400 hover:text-white disabled:opacity-20 flex-shrink-0 text-lg leading-none"
+          title="Previous track"
+        >
+          ⏮
+        </button>
+
+        {/* Play / Pause */}
+        <button
+          onClick={() => {
+            if (!playingTrack) return;
+            paused ? onResume() : onPause();
+          }}
+          disabled={!playingTrack}
+          className="w-9 h-9 rounded-full bg-green-500 hover:bg-green-400 disabled:opacity-20 flex items-center justify-center text-black flex-shrink-0"
+        >
+          {paused ? "▶" : "⏸"}
+        </button>
+
+        {/* Next */}
+        <button
+          onClick={() => nextTrack && onPlayTrack(nextTrack)}
+          disabled={!nextTrack}
+          className="text-zinc-400 hover:text-white disabled:opacity-20 flex-shrink-0 text-lg leading-none"
+          title="Next track"
+        >
+          ⏭
+        </button>
+      </div>
     </div>
   );
 }
@@ -386,6 +600,50 @@ export default function SetBuilderPage({ params }: Props) {
   const [library, setLibrary] = useState<Record<string, TrackMetadata>>({});
   const [enriching, setEnriching] = useState<Set<string>>(new Set());
   const [selectedSlotId, setSelectedSlotId] = useState<string | undefined>();
+  const [playerEnabled, setPlayerEnabled] = useState(false);
+  const [playingSlotId, setPlayingSlotId] = useState<string | null>(null);
+
+  const player = useSpotifyPlayer(playerEnabled);
+
+  // Refs for auto-advance (avoids stale closures in interval)
+  const setRef = useRef(set);
+  useEffect(() => { setRef.current = set; }, [set]);
+  const playingSlotIdRef = useRef(playingSlotId);
+  useEffect(() => { playingSlotIdRef.current = playingSlotId; }, [playingSlotId]);
+  const playerRef2 = useRef(player);
+  useEffect(() => { playerRef2.current = player; }, [player]);
+  const advancingRef = useRef(false);
+
+  // Auto-advance: poll every 500ms, trigger next track when out point is hit
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      const slotId = playingSlotIdRef.current;
+      const currentSet = setRef.current;
+      const p = playerRef2.current;
+      if (!slotId || !currentSet || advancingRef.current || !p.isReady) return;
+
+      const position = await p.getCurrentPosition();
+      if (position === null) return;
+
+      const track = currentSet.tracks.find((t) => t.slotId === slotId);
+      if (!track) return;
+
+      const outPoint = track.outPoint ?? track.durationMs;
+      if (position >= outPoint - 300) {
+        advancingRef.current = true;
+        const idx = currentSet.tracks.findIndex((t) => t.slotId === slotId);
+        const next = currentSet.tracks[idx + 1];
+        if (next) {
+          await p.play(next.uri, next.inPoint ?? 0);
+          setPlayingSlotId(next.slotId);
+        } else {
+          setPlayingSlotId(null);
+        }
+        setTimeout(() => { advancingRef.current = false; }, 1500);
+      }
+    }, 500);
+    return () => clearInterval(interval);
+  }, []);
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -488,6 +746,23 @@ export default function SetBuilderPage({ params }: Props) {
     persist({ ...set, tracks: set.tracks.filter((t) => t.slotId !== slotId) });
   }
 
+  async function playTrack(track: DJSetTrack) {
+    await player.play(track.uri, track.inPoint ?? 0);
+    setPlayingSlotId(track.slotId);
+  }
+
+  async function handleSetIn() {
+    if (!playingSlotId) return;
+    const pos = await player.getCurrentPosition();
+    if (pos !== null) handleTrackChange(playingSlotId, { inPoint: pos });
+  }
+
+  async function handleSetOut() {
+    if (!playingSlotId) return;
+    const pos = await player.getCurrentPosition();
+    if (pos !== null) handleTrackChange(playingSlotId, { outPoint: pos });
+  }
+
   function saveName() {
     if (!set || !name.trim()) return;
     persist({ ...set, name: name.trim() });
@@ -558,12 +833,27 @@ export default function SetBuilderPage({ params }: Props) {
             )}
           </div>
         </div>
-        <button
-          onClick={handleDelete}
-          className="text-sm text-zinc-600 hover:text-red-400 transition-colors flex-shrink-0"
-        >
-          Delete set
-        </button>
+        <div className="flex items-center gap-3 flex-shrink-0">
+          <button
+            onClick={() => setPlayerEnabled((v) => !v)}
+            className={`text-xs px-2 py-1 rounded border transition-colors ${
+              playerEnabled
+                ? player.isReady
+                  ? "border-green-600 text-green-400 bg-green-950"
+                  : "border-zinc-600 text-zinc-400 bg-zinc-800 animate-pulse"
+                : "border-zinc-700 text-zinc-500 hover:text-zinc-300"
+            }`}
+            title={player.isReady ? "Player ready" : playerEnabled ? "Connecting…" : "Enable player"}
+          >
+            {player.isReady ? "▶ ready" : playerEnabled ? "▶ connecting…" : "▶ player"}
+          </button>
+          <button
+            onClick={handleDelete}
+            className="text-sm text-zinc-600 hover:text-red-400 transition-colors"
+          >
+            Delete set
+          </button>
+        </div>
       </div>
 
       {/* Arc bar */}
@@ -605,16 +895,32 @@ export default function SetBuilderPage({ params }: Props) {
                   metadata={library[track.id]}
                   isEnriching={enriching.has(track.id)}
                   isSelected={selectedSlotId === track.slotId}
+                  isPlaying={playingSlotId === track.slotId}
+                  playerEnabled={playerEnabled}
                   onSelect={(slotId) => setSelectedSlotId((prev) => prev === slotId ? undefined : slotId)}
                   onRemove={removeTrack}
                   onMetaChange={handleMetaChange}
                   onTrackChange={handleTrackChange}
+                  onPlay={playTrack}
                 />
               ))}
             </div>
           </SortableContext>
         </DndContext>
       )}
+
+      <PlayerBar
+        tracks={set.tracks}
+        playingSlotId={playingSlotId}
+        playerState={player.playerState}
+        isReady={player.isReady}
+        onPlayTrack={playTrack}
+        onPause={player.pause}
+        onResume={player.resume}
+        onSetIn={handleSetIn}
+        onSetOut={handleSetOut}
+        onSeek={player.seek}
+      />
     </div>
   );
 }

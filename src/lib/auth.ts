@@ -13,6 +13,7 @@ const SPOTIFY_SCOPES = [
   "playlist-read-collaborative",
   "playlist-modify-public",
   "playlist-modify-private",
+  "streaming",
 ].join(" ");
 
 export const authOptions: AuthOptions = {
