@@ -22,6 +22,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { getSet, saveSet, deleteSet, totalDuration, onAirDuration, hasInOutPoints, activeDurationMs, formatDuration } from "@/lib/sets";
 import { getAllTrackMeta, setTrackMeta } from "@/lib/library";
 import { DJSet, DJSetTrack, TrackMetadata, SlskdResult } from "@/lib/types";
+import { exportSetAsJson } from "@/lib/importExport";
 import { useSpotifyPlayer } from "@/lib/useSpotifyPlayer";
 import Link from "next/link";
 
@@ -1229,6 +1230,13 @@ export default function SetBuilderPage({ params }: Props) {
                   className="text-xs px-2 py-1 rounded border transition-colors border-zinc-700 text-zinc-500 hover:text-zinc-300 disabled:opacity-30 disabled:cursor-not-allowed"
                 >
                   m3u8
+                </button>
+                <button
+                  onClick={() => exportSetAsJson(set, getAllTrackMeta())}
+                  title="Export as Spotify Slayer JSON (for sharing between users)"
+                  className="text-xs px-2 py-1 rounded border transition-colors border-zinc-700 text-zinc-500 hover:text-zinc-300"
+                >
+                  .json
                 </button>
                 <div className="flex items-center gap-1" title={tip ?? "Copy files + m3u8 to folder"}>
                   <input

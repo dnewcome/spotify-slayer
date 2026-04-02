@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { getSets, createSet, saveSet, deleteSet, totalDuration, onAirDuration, hasInOutPoints, activeDurationMs } from "@/lib/sets";
-import { getAllTrackMeta } from "@/lib/library";
+import { getAllTrackMeta, setTrackMeta } from "@/lib/library";
 import { DJSet, DJSetTrack, TrackMetadata } from "@/lib/types";
+import { importSetFromJson } from "@/lib/importExport";
 
 const UNTAGGED_COLOR = "#3f3f46";
 
@@ -60,6 +61,7 @@ export default function SetsPage() {
   const [library, setLibrary] = useState<Record<string, TrackMetadata>>({});
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
+  const importRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setSets(getSets());
@@ -81,16 +83,70 @@ export default function SetsPage() {
     setSets(getSets());
   }
 
+  async function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!importRef.current) return;
+    importRef.current.value = "";
+    if (!file) return;
+    try {
+      const { set, trackMetadata } = await importSetFromJson(file);
+      // Avoid stomping an existing set with the same id — give it a fresh id if it already exists
+      const existing = getSets();
+      const conflict = existing.some((s) => s.id === set.id);
+      const importedSet: DJSet = conflict
+        ? { ...set, id: crypto.randomUUID(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
+        : set;
+      saveSet(importedSet);
+      // Merge metadata: only fill in fields the user doesn't already have
+      const currentLib = getAllTrackMeta();
+      for (const [spotifyId, meta] of Object.entries(trackMetadata)) {
+        const current = currentLib[spotifyId];
+        setTrackMeta(spotifyId, {
+          spotifyId,
+          isrc: current?.isrc ?? meta.isrc,
+          mbid: current?.mbid ?? meta.mbid,
+          mbEnriched: current?.mbEnriched ?? meta.mbEnriched,
+          energyLevel: current?.energyLevel ?? meta.energyLevel,
+          busyness: current?.busyness ?? meta.busyness,
+          tags: current?.tags ?? meta.tags,
+          genre: current?.genre ?? meta.genre,
+          bpm: current?.bpm ?? meta.bpm,
+          key: current?.key ?? meta.key,
+          notes: current?.notes ?? meta.notes,
+        });
+      }
+      setSets(getSets());
+      setLibrary(getAllTrackMeta());
+    } catch (err) {
+      alert(`Import failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold">DJ Sets</h1>
-        <button
-          onClick={() => setCreating(true)}
-          className="bg-green-500 hover:bg-green-400 text-black font-semibold text-sm px-4 py-2 rounded-full transition-colors"
-        >
-          New Set
-        </button>
+        <div className="flex items-center gap-2">
+          <input
+            ref={importRef}
+            type="file"
+            accept=".json"
+            className="hidden"
+            onChange={handleImport}
+          />
+          <button
+            onClick={() => importRef.current?.click()}
+            className="border border-zinc-700 hover:border-zinc-500 text-zinc-400 hover:text-zinc-200 text-sm px-4 py-2 rounded-full transition-colors"
+          >
+            Import
+          </button>
+          <button
+            onClick={() => setCreating(true)}
+            className="bg-green-500 hover:bg-green-400 text-black font-semibold text-sm px-4 py-2 rounded-full transition-colors"
+          >
+            New Set
+          </button>
+        </div>
       </div>
 
       {creating && (
