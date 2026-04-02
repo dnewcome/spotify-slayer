@@ -384,63 +384,106 @@ tagged library. The more tracks tagged, the more useful this becomes.
 - "What else sounds like this?" — tracks with matching tags + similar energy
 - Recently used tracks surfaced when building a new set in the same genre
 
-### Phase 5 — Acquisition Workflow (Soulseek)
+### Phase 5 — Acquisition Workflow (slskd)
 
 The bridge between "I want this track" (Spotify discovery) and "I have this file" (local).
+Approach: call slskd's REST API directly from Next.js proxy routes. slskd runs as a separate
+local daemon; the app talks to it via `SLSKD_URL` + `SLSKD_API_KEY` env vars.
 
-- Acquisition queue view: all tracks across all sets with `acquisitionStatus: "want"`
-- One-click open Soulseek search pre-filled with artist + title
-  - Nicotine+ supports a `nicotine://` URL scheme or CLI trigger
-  - Fallback: copy "Artist - Title" to clipboard
-- Mark as acquired, optionally paste in local file path
-- Export "need to find" list as text file for batch Soulseek sessions
-- Longer term: sidecar local process (slskd/Nicotine+ headless) exposing a REST API on
-  localhost; Next.js routes call it to search and trigger downloads in-app
+#### Data model additions
 
-#### Research: SoulSync integration
+```ts
+// TrackMetadata additions
+acquisitionStatus: "none" | "searching" | "downloading" | "downloaded" | "failed";
+localPath?: string;          // relative to MUSIC_DIR once downloaded
+slskdTransferId?: string;    // active transfer ID for progress polling
+downloadProgress?: number;   // 0–100, only meaningful when status is "downloading"
+```
 
-https://github.com/Nezreka/SoulSync — self-hosted music automation platform worth
-evaluating as the download sidecar. Key findings:
+#### Next.js proxy routes (keep API key server-side)
 
-**What it does:** Connects Spotify discovery to file acquisition. Given a track, it searches
-Soulseek (via slskd) and YouTube, downloads FLAC or MP3, enriches metadata (MusicBrainz,
-iTunes, Beatport, Genius), organizes files, and optionally scrobbles to Last.fm. Also
-handles playlist automation (Release Radar, Discovery Weekly, genre/mood-based playlists).
+```
+POST /api/slskd/search
+  body: { artist, title }
+  → POST slskd /api/v0/searches { searchText: "Artist Title" }
+  ← { searchId }
 
-**Stack:** Python 3.11 Flask backend, vanilla JS frontend, SQLite, ~80 REST endpoints,
-runs on localhost:8008. Deploy via Docker or native Python.
+GET  /api/slskd/search/:searchId
+  → GET slskd /api/v0/searches/:id
+  ← { state, results: [{ filename, username, size, bitrate, format, sampleRate }] }
+  (poll until state === "Completed")
 
-**Integration path:** REST API. SoulSync runs as a separate service; Spotify Slayer calls
-its endpoints to trigger downloads and query status. No need to touch its internals.
+POST /api/slskd/download
+  body: { username, filename, size, spotifyId }
+  → POST slskd /api/v0/transfers/downloads/:username/:filename
+  ← { transferId }
+  side effect: sets acquisitionStatus: "downloading" in localStorage via response
 
-**What it requires:**
-- A running slskd instance (Soulseek headless client) — separate setup
-- Spotify API credentials (same ones we already have)
-- Storage path for downloaded files
-- Optional: Tidal/Qobuz/Deezer API credentials for higher-quality sources
+GET  /api/slskd/transfer/:transferId
+  → GET slskd /api/v0/transfers/downloads/:username (filter by id)
+  ← { state, bytesTransferred, size, filename }
+  states: "Queued" | "Initializing" | "InProgress" | "Completed" | "Errored" | "Cancelled"
+```
 
-**What it solves for us:**
-- Automated FLAC/MP3 download from Soulseek without manual search
-- YouTube fallback if Soulseek has no results
-- Metadata enrichment already handled (overlaps with our MusicBrainz work, but covers
-  Beatport genre/BPM data we don't have yet)
-- File organization
+#### UI flow
 
-**Open questions before committing:**
-1. Does slskd expose enough of the Soulseek search results to pick the best file
-   (bitrate, format, file size)? Or does SoulSync auto-pick?
-2. Can we trigger a download for a specific Spotify track ID / ISRC and get back a
-   file path, or does it only work in bulk playlist mode?
-3. How actively maintained is SoulSync? (Check last commit date, open issues)
-4. Licensing — is it MIT/open? Any restrictions on embedding or calling its API?
-5. Does the slskd setup require sharing files back to the Soulseek network? (Upload
-   requirement to avoid bans — relevant if running on a home machine)
+1. **"Find" button** on each track row (visible when `acquisitionStatus === "none"`)
+   - Fires POST `/api/slskd/search`, sets status to `"searching"`
+   - Polls GET `/api/slskd/search/:id` every 1.5s until `state === "Completed"`
 
-**Alternatives if SoulSync doesn't fit:**
-- Call slskd's own REST API directly (slskd has a documented API) — more work but
-  gives full control over search result selection
-- lidarr + slskd (arr-stack) — heavier, media-server oriented, but battle-tested
-- spotDL — Python CLI, downloads from YouTube Music, simpler but lower quality ceiling
+2. **Results drawer** (inline below the track row, or a modal)
+   - Lists results sorted: FLAC first, then by bitrate descending
+   - Columns: filename, format, bitrate, size, user
+   - "Download" button on each row
+
+3. **Download + progress**
+   - Clicking "Download" fires POST `/api/slskd/download`, sets status to `"downloading"`
+   - Track row shows a progress bar (replaces genre pills while downloading)
+   - Polls GET `/api/slskd/transfer/:id` every 2s
+   - On `state === "Completed"`: derive `localPath` from filename, set status to `"downloaded"`, clear `slskdTransferId`
+   - On `"Errored"` / `"Cancelled"`: set status to `"failed"`, show retry button
+
+4. **Downloaded state**
+   - Track row shows a small "FLAC" or "MP3" badge
+   - Play button switches to use local file via `/api/files/[...path]` instead of Spotify SDK
+
+#### localPath derivation
+
+slskd downloads files to its own configured path. Two options:
+- **Point `MUSIC_DIR` at slskd's download directory** — no moving needed, `localPath` is
+  derived from the filename in the transfer result
+- **Post-download move** — after `Completed`, a server action moves the file into `MUSIC_DIR`
+  following a `Artist/Title.flac` convention
+
+Simplest to start: point `MUSIC_DIR` at slskd's download dir, store the full relative path
+as-is from the transfer filename (slskd preserves the remote path structure).
+
+#### Progress polling: client-side vs SSE
+
+Simple option (start here): client polls `/api/slskd/transfer/:id` every 2s when a track
+has `acquisitionStatus: "downloading"`. Only active for tracks currently downloading — low
+request volume in practice.
+
+Future option: SSE route (`GET /api/slskd/transfer/:id/stream`) that proxies slskd polling
+server-side and pushes updates. Cleaner but more infrastructure.
+
+#### Acquisition queue view (future)
+
+A dedicated page showing all tracks across all sets grouped by `acquisitionStatus`:
+- `"none"` / `"want"` — not yet found
+- `"downloading"` — in progress with aggregate progress
+- `"downloaded"` — have the file
+
+"Download all missing" batch action: iterate queue, fire searches sequentially, auto-pick
+best FLAC result, enqueue downloads.
+
+#### Config (.env)
+
+```
+SLSKD_URL=http://localhost:5030
+SLSKD_API_KEY=<generate with: openssl rand -base64 48>
+MUSIC_DIR=/path/to/slskd/downloads   # or wherever files land
+```
 
 ---
 
