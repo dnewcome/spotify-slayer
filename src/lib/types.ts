@@ -38,6 +38,7 @@ export interface TrackMetadata {
   slskdTransferId?: string;   // active transfer UUID
   slskdUsername?: string;     // Soulseek peer the file is being downloaded from
   downloadProgress?: number;  // 0–100
+  downloadState?: string;     // raw slskd state string, e.g. "Queued, Remotely"
   notes?: string;
 }
 

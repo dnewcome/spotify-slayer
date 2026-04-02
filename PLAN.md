@@ -449,14 +449,18 @@ GET  /api/slskd/transfer/:transferId
 
 #### localPath derivation
 
-slskd downloads files to its own configured path. Two options:
-- **Point `MUSIC_DIR` at slskd's download directory** — no moving needed, `localPath` is
-  derived from the filename in the transfer result
-- **Post-download move** — after `Completed`, a server action moves the file into `MUSIC_DIR`
-  following a `Artist/Title.flac` convention
+**Decided:** `MUSIC_DIR` is separate from `SLSKD_DOWNLOADS_DIR`. After a download completes,
+the file is moved out of slskd's download area and into the library.
 
-Simplest to start: point `MUSIC_DIR` at slskd's download dir, store the full relative path
-as-is from the transfer filename (slskd preserves the remote path structure).
+slskd's actual on-disk layout (observed from live testing): it takes the last two path
+components of the remote Windows path and mirrors them locally:
+```
+remote:  @@nfkeu\!!unsorted\Album Name\01 - Track.flac
+local:   SLSKD_DOWNLOADS_DIR/Album Name/01 - Track.flac
+```
+
+After normalization: `MUSIC_DIR/Artist - Title.flac` (flat, no subfolders).
+Filename collision (same artist+title): append ISRC → `Artist - Title (ISRC).flac`.
 
 #### File management and ISRC tagging
 
@@ -484,6 +488,9 @@ When a download completes, the app needs to do three things before marking the t
 
 3. **Store `localPath`** — relative path from `MUSIC_DIR` root, e.g. `Artist - Title.flac`.
    This is the fast path used on every playback request.
+
+**Tag writing uses ffmpeg** (`-c copy -metadata ISRC=... -metadata title=... -metadata artist=...`),
+which handles FLAC vorbis comments, MP3 ID3v2 TSRC, and WAV uniformly. No npm dependencies.
 
 **Recovery: `POST /api/library/scan`**
 
@@ -518,8 +525,9 @@ best FLAC result, enqueue downloads.
 
 ```
 SLSKD_URL=http://localhost:5030
-SLSKD_API_KEY=<generate with: openssl rand -base64 48>
-MUSIC_DIR=/path/to/slskd/downloads   # or wherever files land
+SLSKD_API_KEY=<generate with: openssl rand -hex 32>
+SLSKD_DOWNLOADS_DIR=/home/user/.local/share/slskd/downloads
+MUSIC_DIR=/home/user/Music/dj-library   # clean normalized library, separate from slskd
 ```
 
 #### Auth: API key vs JWT
@@ -572,9 +580,158 @@ extensions (`.lrc`, `.jpg`, `.nfo`, `.cue`) by checking filename extension.
 
 **Sorting results:** FLAC first (by size desc), then MP3 by bitRate desc, then everything else.
 
-**Download endpoint:** not yet tested — to be confirmed:
-- `POST /api/v0/transfers/downloads/{username}/{filename}` body: `{ size }`
-- `GET /api/v0/transfers/downloads` returns all downloads with state and progress
+**Download endpoint (confirmed):**
+- `POST /api/v0/transfers/downloads/{username}` body: `[{ filename, size }]` (array)
+- Returns `{ enqueued: [{ id, state, ... }], failed: [] }`
+- Transfer poll: `GET /api/v0/transfers/downloads/{username}` → `{ directories: [{ files: [...] }] }`
+- State strings use prefix pattern: `"Completed, Succeeded"`, `"Errored, ..."` — check with `startsWith`
+
+### Phase 5B — Batch download ("Download Set")
+
+A "download missing" button on the set builder page. Runs the full search → pick → download →
+normalize flow for every track in the set that lacks a `localPath`.
+
+**Auto-pick logic:** top FLAC result by size; fall back to top MP3 by bitrate if no FLAC found.
+Sequential downloads (one at a time) to avoid hammering Soulseek.
+
+**UI:** progress indicator showing `N / total tracks acquired`. Individual track rows continue
+showing their own per-track status (searching → found → downloading → downloaded).
+
+### Phase 5C — Set export
+
+**Precondition:** all tracks in the set must have `acquisitionStatus === "downloaded"`. Export
+buttons are disabled (with a "N tracks missing" tooltip) until the set is complete.
+
+**m3u8** — simple, works everywhere including Traktor:
+```
+#EXTM3U
+#EXTINF:177,Megan Thee Stallion - Cocky Af
+/home/user/Music/dj-library/Megan Thee Stallion - Cocky Af.flac
+```
+Route: `GET /api/export/[setId]/m3u` → `Content-Disposition: attachment; filename="Set Name.m3u8"`
+
+**rekordbox XML** — required for CDJ USB export, includes cue points:
+```xml
+<DJ_PLAYLISTS Version="1.0.0">
+  <COLLECTION Entries="3">
+    <TRACK TrackID="1" Name="Cocky Af" Artist="Megan Thee Stallion"
+           TotalTime="177" Location="file://localhost/home/.../Cocky Af.flac">
+      <POSITION_MARK Name="in"  Type="0" Start="1.635" Num="-1"/>
+      <POSITION_MARK Name="out" Type="0" Start="97.000" Num="-1"/>
+    </TRACK>
+  </COLLECTION>
+  <PLAYLISTS>
+    <NODE Type="0" Name="ROOT" Count="1">
+      <NODE Name="set1" Type="1" KeyType="0" Entries="3">
+        <TRACK Key="1"/>
+      </NODE>
+    </NODE>
+  </PLAYLISTS>
+</DJ_PLAYLISTS>
+```
+Route: `GET /api/export/[setId]/rekordbox` → XML attachment
+
+In/out points (`positionMs / 1000`) map directly to `POSITION_MARK Start` (seconds, float).
+Named cue points (Phase 2.5) also round-trip via `POSITION_MARK Name`.
+
+### Phase 5D — Portable USB export (Traktor + rekordbox/CDJ)
+
+#### The problem
+
+The Phase 5C exports use absolute paths (`/home/dan/Music/dj-library/...`). These work for
+importing into rekordbox on the local machine, but break the moment the files move — to a USB
+stick, another machine, or a different mount point. The goal is a single USB that:
+
+- Works in **Traktor** directly (no rekordbox needed): point Traktor at the USB folder, import
+  the m3u8 playlist.
+- Works with **rekordbox → CDJ**: import the XML into rekordbox (pointing at the USB), then
+  use rekordbox's "Export to device" to write the PIONEER/ database to the same USB.
+
+#### The fundamental tension
+
+| Format | Path requirement |
+|--------|-----------------|
+| m3u8 for Traktor | Relative paths work from any mount point |
+| rekordbox XML | Absolute paths required; rekordbox needs to find the files at import time |
+| CDJ (via rekordbox USB export) | rekordbox writes PIONEER/ database to USB after import |
+
+The solution: **the app copies files to the USB and generates both formats at copy time**,
+with paths derived from the actual USB mount point.
+
+#### Proposed "Copy to USB" flow
+
+1. User clicks "Copy to USB" on the set builder (all tracks must be downloaded)
+2. App prompts for USB mount point (e.g. `/media/dan/USBDRIVE`) — or auto-detects removable
+   volumes (Linux: parse `lsblk` output; macOS: `/Volumes/`)
+3. App copies each FLAC/MP3 from `MUSIC_DIR` to `{USB_ROOT}/` (flat, same filenames)
+4. Generates `{USB_ROOT}/{set-name}.m3u8` with **relative paths** (`./Foo Fighters - Everlong.flac`)
+5. Generates `{USB_ROOT}/{set-name}.xml` with **absolute paths** using the USB mount point
+   (`file://localhost/media/dan/USBDRIVE/Foo Fighters - Everlong.flac`)
+
+#### After the copy
+
+**For Traktor:**
+- Add `{USB_ROOT}` as a music folder in Traktor preferences
+- Drag `{set-name}.m3u8` into a Traktor playlist slot (or use File → Import Playlist)
+- Done — Traktor finds the files via relative paths regardless of mount point
+
+**For rekordbox → CDJ:**
+- In rekordbox: File → Import → rekordbox xml → pick `{set-name}.xml` from the USB
+- rekordbox finds the audio files at the absolute USB paths (USB must be mounted at same path)
+- Right-click playlist → Export to device → select the USB
+- rekordbox writes `PIONEER/` database alongside the audio files and m3u8
+- USB now has: audio files + relative m3u8 (Traktor) + PIONEER/ database (CDJ) coexisting
+
+#### Why flat layout on USB
+
+Flat (`/USBDRIVE/Artist - Title.flac`) rather than a subfolder (`/USBDRIVE/music/...`) keeps
+relative paths in the m3u8 simple (`./Artist - Title.flac`) and matches how most DJs organize
+their USB sticks. rekordbox and CDJs handle flat layouts fine.
+
+#### Deduplication across sets
+
+If two sets share a track, the file is only copied once (same filename, same content). The
+copy step checks whether the destination file already exists and skips if so.
+
+#### Open questions
+
+- Auto-detect USB volumes vs. manual path entry — manual is simpler for v1
+- Whether to prompt before overwriting existing files on the USB
+
+#### NML (Traktor native format) — deferred, but worth doing
+
+Traktor's native format is NML (XML-based). Generating NML instead of m3u8 would give Traktor
+richer data: **cue points load automatically** (no manual re-setting), BPM, key, and loop
+markers carry through. In/out points are already implemented in this app and already export
+correctly in the rekordbox XML — the data is there, it just needs an NML serializer.
+
+**Why m3u8 for now:** no npm library exists for NML generation; it needs to be written from
+scratch and tested against a live Traktor install. m3u8 gets playlists working without that
+investment.
+
+**When to revisit:** once the USB copy flow is working end-to-end and the value of pre-loaded
+cue points in Traktor is confirmed. At that point NML is a direct upgrade — same data, better
+format.
+
+**NML format notes (for implementation):**
+- XML file, `.nml` extension, typically named `collection.nml`
+- Path encoding is non-standard: each directory component gets `/:` prepended
+  ```xml
+  <!-- /home/dan/Music/dj-library/Foo Fighters - Everlong.flac -->
+  <LOCATION DIR="/:home/:dan/:Music/:dj-library/:" FILE="Foo Fighters - Everlong.flac"
+            VOLUME="/" VOLUMEID="/"/>
+  ```
+- Cue points use `<CUE_V2>` with `START` in milliseconds (matches our `inPoint`/`outPoint` directly):
+  ```xml
+  <CUE_V2 NAME="in"  TYPE="0" START="1635"  LEN="0" REPEATS="-1" HOTCUE="-1"/>
+  <CUE_V2 NAME="out" TYPE="0" START="97000" LEN="0" REPEATS="-1" HOTCUE="-1"/>
+  ```
+  `TYPE`: 0=cue, 4=grid, 5=loop. `HOTCUE`: -1 for memory cues, 0–7 for hot cues.
+- Playlist structure: `<PLAYLISTS>` → `<NODE TYPE="FOLDER" NAME="$ROOT">` →
+  `<NODE TYPE="PLAYLIST" NAME="set name">` → `<ENTRY><PRIMARYKEY TYPE="TRACK" KEY="..."/></ENTRY>`
+- `PRIMARYKEY KEY` format: `{VOLUME}{DIR}{FILE}` e.g. `//:home/:dan/:Music/:dj-library/:Foo Fighters - Everlong.flac`
+- No known maintained npm library — implement from scratch, test against live Traktor install
+- The path encoding format should be confirmed from an actual Traktor-exported NML before shipping
 
 ---
 

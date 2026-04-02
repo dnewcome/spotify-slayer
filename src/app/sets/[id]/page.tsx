@@ -116,7 +116,7 @@ function InOutInput({
           setText(value !== undefined ? formatMmSs(value) : "");
           setEditing(true);
         }}
-        className="text-xs font-mono w-10 text-center text-zinc-600 hover:text-zinc-300 transition-colors"
+        className="text-xs font-mono w-10 text-center text-zinc-400 hover:text-zinc-200 transition-colors"
         title={placeholder === "in" ? "In point (mm:ss)" : "Out point (mm:ss)"}
       >
         {value !== undefined ? formatMmSs(value) : <span className="text-zinc-600">{placeholder}</span>}
@@ -313,6 +313,7 @@ function SortableTrackRow({
   onPlay,
   onFind,
   onDownload,
+  onCancelDownload,
 }: {
   track: DJSetTrack;
   index: number;
@@ -330,6 +331,7 @@ function SortableTrackRow({
   onPlay?: (track: DJSetTrack) => void;
   onFind?: () => void;
   onDownload?: (r: SlskdResult) => void;
+  onCancelDownload?: () => void;
 }) {
   const [tagInput, setTagInput] = useState("");
   const [showResults, setShowResults] = useState(false);
@@ -443,12 +445,18 @@ function SortableTrackRow({
           {/* Acquisition status */}
           {metadata?.acquisitionStatus === "downloading" && (
             <div className="mt-0.5">
-              <div className="h-1 w-32 bg-zinc-700 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-blue-500 rounded-full transition-all"
-                  style={{ width: `${metadata.downloadProgress ?? 0}%` }}
-                />
-              </div>
+              {(metadata.downloadProgress ?? 0) === 0 ? (
+                <span className="text-xs text-zinc-600 animate-pulse">
+                  {metadata.downloadState?.startsWith("Queued") ? "queued…" : "connecting…"}
+                </span>
+              ) : (
+                <div className="h-1 w-32 bg-zinc-700 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-blue-500 rounded-full transition-all"
+                    style={{ width: `${metadata.downloadProgress}%` }}
+                  />
+                </div>
+              )}
             </div>
           )}
           {metadata?.acquisitionStatus === "downloaded" && metadata.localPath && (
@@ -462,7 +470,7 @@ function SortableTrackRow({
 
         {/* Duration + in/out */}
         <div className="flex items-center gap-1 flex-shrink-0">
-          <div className="text-xs text-zinc-600 w-9 text-right">
+          <div className="text-xs text-zinc-400 w-9 text-right">
             {formatDuration(track.durationMs)}
           </div>
           <InOutInput
@@ -470,7 +478,7 @@ function SortableTrackRow({
             placeholder="in"
             onCommit={(ms) => onTrackChange(track.slotId, { inPoint: ms })}
           />
-          <span className="text-zinc-700 text-xs">–</span>
+          <span className="text-zinc-500 text-xs">–</span>
           <InOutInput
             value={track.outPoint}
             placeholder="out"
@@ -495,15 +503,25 @@ function SortableTrackRow({
         />
 
         {/* Acquisition controls */}
-        {(!metadata?.acquisitionStatus || metadata.acquisitionStatus === "failed") && (
-          <button
-            onClick={(e) => { e.stopPropagation(); onFind?.(); }}
-            className="opacity-0 group-hover:opacity-100 transition-opacity text-xs px-1.5 py-0.5 rounded text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 border border-transparent hover:border-zinc-700 flex-shrink-0"
-            title="Find on Soulseek"
-          >
-            {metadata?.acquisitionStatus === "failed" ? "retry" : "find"}
-          </button>
-        )}
+        {(() => {
+          const status = metadata?.acquisitionStatus;
+          // Show find button unless actively in-progress or already on disk.
+          // "found" with no in-memory results (e.g. after page reload) also re-shows find.
+          const hasResults = searchResults !== null && searchResults !== undefined;
+          const showFind = !isSearching
+            && status !== "downloading"
+            && status !== "downloaded"
+            && (!hasResults || status === "failed" || !status);
+          return showFind ? (
+            <button
+              onClick={(e) => { e.stopPropagation(); onFind?.(); }}
+              className="opacity-0 group-hover:opacity-100 transition-opacity text-xs px-1.5 py-0.5 rounded text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 border border-transparent hover:border-zinc-700 flex-shrink-0"
+              title="Find on Soulseek"
+            >
+              {status === "failed" ? "retry" : "find"}
+            </button>
+          ) : null;
+        })()}
         {isSearching && (
           <span className="text-xs text-zinc-600 animate-pulse flex-shrink-0">finding…</span>
         )}
@@ -516,10 +534,19 @@ function SortableTrackRow({
             {searchResults.length} result{searchResults.length !== 1 ? "s" : ""}
           </button>
         )}
-        {metadata?.acquisitionStatus === "downloading" && (
+        {metadata?.acquisitionStatus === "downloading" && (metadata.downloadProgress ?? 0) > 0 && (
           <span className="text-xs text-zinc-500 flex-shrink-0">
-            {metadata.downloadProgress ?? 0}%
+            {metadata.downloadProgress}%
           </span>
+        )}
+        {metadata?.acquisitionStatus === "downloading" && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onCancelDownload?.(); }}
+            className="opacity-0 group-hover:opacity-100 transition-opacity text-zinc-600 hover:text-red-400 text-xs flex-shrink-0"
+            title="Cancel download"
+          >
+            ×
+          </button>
         )}
 
         {/* Remove */}
@@ -731,6 +758,7 @@ export default function SetBuilderPage({ params }: Props) {
   const [selectedSlotId, setSelectedSlotId] = useState<string | undefined>();
   const [playerEnabled, setPlayerEnabled] = useState(false);
   const [playingSlotId, setPlayingSlotId] = useState<string | null>(null);
+  const [copyDest, setCopyDest] = useState("");
 
   // slskd acquisition state (transient — not persisted)
   const [slskdSearching, setSlskdSearching] = useState<Set<string>>(new Set()); // spotifyId
@@ -908,6 +936,50 @@ export default function SetBuilderPage({ params }: Props) {
     router.push("/sets");
   }
 
+  async function handleCopyToFolder(destDir: string) {
+    if (!set || !destDir.trim()) return;
+    const lib = getAllTrackMeta();
+    const res = await fetch("/api/export/copy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ set, library: lib, destDir: destDir.trim() }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      const names = (data.tracks as string[] | undefined)?.join(", ") ?? data.error;
+      alert(`Copy failed: ${names}`);
+      return;
+    }
+    const { copied, skipped, errors } = data as { copied: number; skipped: number; errors: string[] };
+    const msg = [`Copied ${copied} file${copied !== 1 ? "s" : ""}`, skipped ? `${skipped} already up to date` : null, errors.length ? `${errors.length} error(s): ${errors.join("; ")}` : null].filter(Boolean).join(" · ");
+    alert(msg);
+  }
+
+  async function handleExport(format: "rekordbox" | "m3u") {
+    if (!set) return;
+    const lib = getAllTrackMeta();
+    const res = await fetch(`/api/export/${format}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ set, library: lib }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      const names = (err.tracks as string[] | undefined)?.join(", ") ?? err.error;
+      alert(`Export failed — missing tracks: ${names}`);
+      return;
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = format === "rekordbox" ? `${set.name}.xml` : `${set.name}.m3u8`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
   async function handleFind(track: DJSetTrack) {
     const id = track.id;
     setSlskdSearching((prev) => new Set(prev).add(id));
@@ -940,6 +1012,28 @@ export default function SetBuilderPage({ params }: Props) {
     } finally {
       setSlskdSearching((prev) => { const next = new Set(prev); next.delete(id); return next; });
     }
+  }
+
+  async function handleCancelDownload(spotifyId: string) {
+    const meta = getAllTrackMeta()[spotifyId];
+    if (!meta?.slskdTransferId || !meta?.slskdUsername) {
+      // No active transfer to cancel — just reset status
+      setTrackMeta(spotifyId, { acquisitionStatus: undefined, downloadProgress: undefined, downloadState: undefined });
+      setLibrary(getAllTrackMeta());
+      return;
+    }
+    await fetch(
+      `/api/slskd/transfer/${meta.slskdTransferId}?username=${encodeURIComponent(meta.slskdUsername)}`,
+      { method: "DELETE" }
+    ).catch(() => {}); // best-effort
+    setTrackMeta(spotifyId, {
+      acquisitionStatus: undefined,
+      downloadProgress: undefined,
+      downloadState: undefined,
+      slskdTransferId: undefined,
+      slskdUsername: undefined,
+    });
+    setLibrary(getAllTrackMeta());
   }
 
   async function handleDownload(track: DJSetTrack, result: SlskdResult) {
@@ -987,21 +1081,48 @@ export default function SetBuilderPage({ params }: Props) {
           const data = await res.json();
 
           if (data.state === "Completed") {
+            // Normalize: move from slskd downloads dir to MUSIC_DIR with clean filename + tags
+            const track = setRef.current?.tracks.find((t) => t.id === meta.spotifyId);
+            let localPath: string = data.filename; // fallback to raw path
+            if (track) {
+              try {
+                const normRes = await fetch("/api/library/normalize", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    slskdFilename: data.filename,
+                    artist: track.artists[0] ?? "",
+                    title: track.name,
+                    isrc: track.isrc ?? meta.isrc,
+                  }),
+                });
+                if (normRes.ok) {
+                  const normData = await normRes.json();
+                  localPath = normData.localPath;
+                } else {
+                  console.warn("[normalize] failed", await normRes.text());
+                }
+              } catch (err) {
+                console.warn("[normalize] error", err);
+              }
+            }
             setTrackMeta(meta.spotifyId, {
               acquisitionStatus: "downloaded",
-              localPath: data.filename,
+              localPath,
               downloadProgress: 100,
+              downloadState: undefined,
               slskdTransferId: undefined,
               slskdUsername: undefined,
             });
           } else if (data.state === "Errored" || data.state === "Cancelled") {
             setTrackMeta(meta.spotifyId, {
               acquisitionStatus: "failed",
+              downloadState: undefined,
               slskdTransferId: undefined,
               slskdUsername: undefined,
             });
           } else {
-            setTrackMeta(meta.spotifyId, { downloadProgress: data.progress });
+            setTrackMeta(meta.spotifyId, { downloadProgress: data.progress, downloadState: data.rawState });
           }
         } catch {
           // ignore transient errors
@@ -1086,6 +1207,51 @@ export default function SetBuilderPage({ params }: Props) {
           >
             {player.isReady ? "▶ ready" : playerEnabled ? "▶ connecting…" : "▶ player"}
           </button>
+          {(() => {
+            const downloaded = set.tracks.filter((t) => library[t.id]?.localPath).length;
+            const total = set.tracks.length;
+            const ready = total > 0 && downloaded === total;
+            const tip = ready ? undefined : `${total - downloaded} track${total - downloaded !== 1 ? "s" : ""} not downloaded`;
+            return total > 0 ? (
+              <>
+                <button
+                  onClick={() => handleExport("rekordbox")}
+                  disabled={!ready}
+                  title={tip ?? "Export rekordbox XML"}
+                  className="text-xs px-2 py-1 rounded border transition-colors border-zinc-700 text-zinc-500 hover:text-zinc-300 disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  rekordbox
+                </button>
+                <button
+                  onClick={() => handleExport("m3u")}
+                  disabled={!ready}
+                  title={tip ?? "Export m3u8 playlist"}
+                  className="text-xs px-2 py-1 rounded border transition-colors border-zinc-700 text-zinc-500 hover:text-zinc-300 disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  m3u8
+                </button>
+                <div className="flex items-center gap-1" title={tip ?? "Copy files + m3u8 to folder"}>
+                  <input
+                    type="text"
+                    value={copyDest}
+                    onChange={(e) => setCopyDest(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter" && ready) handleCopyToFolder(copyDest); }}
+                    placeholder="/media/USB"
+                    disabled={!ready}
+                    className="text-xs px-2 py-1 rounded border border-zinc-700 bg-zinc-900 text-zinc-300 placeholder-zinc-600 focus:outline-none focus:border-zinc-500 w-32 disabled:opacity-30"
+                  />
+                  <button
+                    onClick={() => handleCopyToFolder(copyDest)}
+                    disabled={!ready || !copyDest.trim()}
+                    title="Copy files to folder"
+                    className="text-xs px-2 py-1 rounded border transition-colors border-zinc-700 text-zinc-500 hover:text-zinc-300 disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    copy
+                  </button>
+                </div>
+              </>
+            ) : null;
+          })()}
           <button
             onClick={handleDelete}
             className="text-sm text-zinc-600 hover:text-red-400 transition-colors"
@@ -1145,6 +1311,7 @@ export default function SetBuilderPage({ params }: Props) {
                   onPlay={playTrack}
                   onFind={() => handleFind(track)}
                   onDownload={(r) => handleDownload(track, r)}
+                  onCancelDownload={() => handleCancelDownload(track.id)}
                 />
               ))}
             </div>
