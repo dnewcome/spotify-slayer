@@ -33,7 +33,18 @@ export interface TrackMetadata {
   genre?: string[];       // seeded from MusicBrainz, user can override
   bpm?: number;
   key?: string;
-  acquisitionStatus?: "want" | "acquired" | "skip";
+  acquisitionStatus?: "searching" | "found" | "downloading" | "downloaded" | "failed";
   localPath?: string;
+  slskdTransferId?: string;   // active transfer UUID
+  slskdUsername?: string;     // Soulseek peer the file is being downloaded from
+  downloadProgress?: number;  // 0–100
   notes?: string;
+}
+
+export interface SlskdResult {
+  username: string;
+  filename: string;
+  size: number;
+  bitRate: number | null;
+  format: string;  // "FLAC" | "MP3" | "WAV" etc.
 }

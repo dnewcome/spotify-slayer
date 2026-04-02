@@ -21,7 +21,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { getSet, saveSet, deleteSet, totalDuration, onAirDuration, hasInOutPoints, activeDurationMs, formatDuration } from "@/lib/sets";
 import { getAllTrackMeta, setTrackMeta } from "@/lib/library";
-import { DJSet, DJSetTrack, TrackMetadata } from "@/lib/types";
+import { DJSet, DJSetTrack, TrackMetadata, SlskdResult } from "@/lib/types";
 import { useSpotifyPlayer } from "@/lib/useSpotifyPlayer";
 import Link from "next/link";
 
@@ -235,6 +235,65 @@ function SetArcBar({
   );
 }
 
+// ── Slskd results drawer ──────────────────────────────────────────────────────
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(0)}MB`;
+  return `${(bytes / 1e3).toFixed(0)}KB`;
+}
+
+function SlskdDrawer({
+  results,
+  onDownload,
+  onClose,
+}: {
+  results: SlskdResult[];
+  onDownload: (r: SlskdResult) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      className="ml-3 border-x border-b border-zinc-600 rounded-b-lg bg-zinc-900 overflow-hidden"
+      onClick={(e) => e.stopPropagation()}
+    >
+      {results.length === 0 ? (
+        <div className="px-3 py-2 text-xs text-zinc-500">No results found.</div>
+      ) : (
+        <div className="divide-y divide-zinc-800 max-h-48 overflow-y-auto">
+          {results.map((r, i) => (
+            <div key={i} className="flex items-center gap-2 px-3 py-1.5 hover:bg-zinc-800 text-xs">
+              <span className="w-8 text-center font-mono rounded px-1 py-0.5 bg-zinc-800 border border-zinc-700 text-zinc-300 flex-shrink-0">
+                {r.format}
+              </span>
+              {r.bitRate && (
+                <span className="text-zinc-500 flex-shrink-0">{r.bitRate}kbps</span>
+              )}
+              <span className="text-zinc-500 flex-shrink-0">{formatBytes(r.size)}</span>
+              <span className="text-zinc-600 truncate flex-1 min-w-0" title={r.filename}>
+                {r.filename.split(/[/\\]/).pop()}
+              </span>
+              <span className="text-zinc-600 truncate max-w-[6rem]" title={r.username}>
+                {r.username}
+              </span>
+              <button
+                onClick={() => onDownload(r)}
+                className="flex-shrink-0 text-xs px-2 py-0.5 rounded bg-green-900 hover:bg-green-800 text-green-300 border border-green-700"
+              >
+                ↓
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="px-3 py-1 border-t border-zinc-800 flex justify-end">
+        <button onClick={onClose} className="text-xs text-zinc-600 hover:text-zinc-400">
+          close
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Sortable track row ────────────────────────────────────────────────────────
 
 function SortableTrackRow({
@@ -245,11 +304,15 @@ function SortableTrackRow({
   isSelected,
   isPlaying,
   playerEnabled,
+  searchResults,
+  isSearching,
   onSelect,
   onRemove,
   onMetaChange,
   onTrackChange,
   onPlay,
+  onFind,
+  onDownload,
 }: {
   track: DJSetTrack;
   index: number;
@@ -258,13 +321,24 @@ function SortableTrackRow({
   isSelected?: boolean;
   isPlaying?: boolean;
   playerEnabled?: boolean;
+  searchResults?: SlskdResult[] | null;
+  isSearching?: boolean;
   onSelect: (slotId: string) => void;
   onRemove: (slotId: string) => void;
   onMetaChange: (id: string, patch: Partial<TrackMetadata>) => void;
   onTrackChange: (slotId: string, patch: Partial<DJSetTrack>) => void;
   onPlay?: (track: DJSetTrack) => void;
+  onFind?: () => void;
+  onDownload?: (r: SlskdResult) => void;
 }) {
   const [tagInput, setTagInput] = useState("");
+  const [showResults, setShowResults] = useState(false);
+
+  // Auto-open results drawer when search finishes
+  useEffect(() => {
+    if (searchResults !== null && searchResults !== undefined) setShowResults(true);
+  }, [searchResults]);
+
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: track.slotId });
 
@@ -366,6 +440,24 @@ function SortableTrackRow({
               </div>
             ) : null;
           })()}
+          {/* Acquisition status */}
+          {metadata?.acquisitionStatus === "downloading" && (
+            <div className="mt-0.5">
+              <div className="h-1 w-32 bg-zinc-700 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-blue-500 rounded-full transition-all"
+                  style={{ width: `${metadata.downloadProgress ?? 0}%` }}
+                />
+              </div>
+            </div>
+          )}
+          {metadata?.acquisitionStatus === "downloaded" && metadata.localPath && (
+            <div className="mt-0.5">
+              <span className="text-xs px-1.5 py-0 rounded bg-blue-950 text-blue-300 border border-blue-800">
+                {metadata.localPath.split(/[/\\]/).pop()?.split(".").pop()?.toUpperCase() ?? "FILE"}
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Duration + in/out */}
@@ -402,6 +494,34 @@ function SortableTrackRow({
           onChange={(v) => onMetaChange(track.id, { busyness: v })}
         />
 
+        {/* Acquisition controls */}
+        {(!metadata?.acquisitionStatus || metadata.acquisitionStatus === "failed") && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onFind?.(); }}
+            className="opacity-0 group-hover:opacity-100 transition-opacity text-xs px-1.5 py-0.5 rounded text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 border border-transparent hover:border-zinc-700 flex-shrink-0"
+            title="Find on Soulseek"
+          >
+            {metadata?.acquisitionStatus === "failed" ? "retry" : "find"}
+          </button>
+        )}
+        {isSearching && (
+          <span className="text-xs text-zinc-600 animate-pulse flex-shrink-0">finding…</span>
+        )}
+        {searchResults !== null && searchResults !== undefined && !isSearching && metadata?.acquisitionStatus === "found" && (
+          <button
+            onClick={(e) => { e.stopPropagation(); setShowResults((v) => !v); }}
+            className="text-xs px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-zinc-700 hover:border-zinc-500 flex-shrink-0"
+            title="Show results"
+          >
+            {searchResults.length} result{searchResults.length !== 1 ? "s" : ""}
+          </button>
+        )}
+        {metadata?.acquisitionStatus === "downloading" && (
+          <span className="text-xs text-zinc-500 flex-shrink-0">
+            {metadata.downloadProgress ?? 0}%
+          </span>
+        )}
+
         {/* Remove */}
         <button
           onClick={() => onRemove(track.slotId)}
@@ -411,6 +531,15 @@ function SortableTrackRow({
         </button>
       </div>
       </div>{/* end row */}
+
+      {/* Slskd results drawer */}
+      {showResults && searchResults && (
+        <SlskdDrawer
+          results={searchResults}
+          onDownload={(r) => { onDownload?.(r); setShowResults(false); }}
+          onClose={() => setShowResults(false)}
+        />
+      )}
 
       {/* Tag editor — shown when selected */}
       {isSelected && (
@@ -603,6 +732,10 @@ export default function SetBuilderPage({ params }: Props) {
   const [playerEnabled, setPlayerEnabled] = useState(false);
   const [playingSlotId, setPlayingSlotId] = useState<string | null>(null);
 
+  // slskd acquisition state (transient — not persisted)
+  const [slskdSearching, setSlskdSearching] = useState<Set<string>>(new Set()); // spotifyId
+  const [slskdResults, setSlskdResults] = useState<Record<string, SlskdResult[]>>({}); // spotifyId → results
+
   const player = useSpotifyPlayer(playerEnabled);
 
   // Refs for auto-advance (avoids stale closures in interval)
@@ -775,6 +908,112 @@ export default function SetBuilderPage({ params }: Props) {
     router.push("/sets");
   }
 
+  async function handleFind(track: DJSetTrack) {
+    const id = track.id;
+    setSlskdSearching((prev) => new Set(prev).add(id));
+    handleMetaChange(id, { acquisitionStatus: "searching" });
+
+    try {
+      const startRes = await fetch("/api/slskd/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ artist: track.artists[0] ?? "", title: track.name }),
+      });
+      const { searchId } = await startRes.json();
+      if (!searchId) throw new Error("no searchId");
+
+      // Poll until done
+      let results: SlskdResult[] = [];
+      for (let i = 0; i < 20; i++) {
+        await new Promise((r) => setTimeout(r, 1500));
+        const pollRes = await fetch(`/api/slskd/search/${searchId}`);
+        const pollData = await pollRes.json();
+        results = pollData.results ?? [];
+        if (pollData.done) break;
+      }
+
+      setSlskdResults((prev) => ({ ...prev, [id]: results }));
+      handleMetaChange(id, { acquisitionStatus: "found" });
+    } catch (err) {
+      console.error("[find]", err);
+      handleMetaChange(id, { acquisitionStatus: "failed" });
+    } finally {
+      setSlskdSearching((prev) => { const next = new Set(prev); next.delete(id); return next; });
+    }
+  }
+
+  async function handleDownload(track: DJSetTrack, result: SlskdResult) {
+    const id = track.id;
+    handleMetaChange(id, { acquisitionStatus: "downloading", downloadProgress: 0 });
+
+    try {
+      const res = await fetch("/api/slskd/download", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: result.username, filename: result.filename, size: result.size }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.transferId) throw new Error(data.error ?? "download failed");
+
+      handleMetaChange(id, { slskdTransferId: data.transferId, slskdUsername: data.username });
+    } catch (err) {
+      console.error("[download]", err);
+      handleMetaChange(id, { acquisitionStatus: "failed" });
+    }
+  }
+
+  // Transfer polling — runs for any tracks currently downloading
+  useEffect(() => {
+    const downloading = Object.values(getAllTrackMeta()).filter(
+      (m) => m.acquisitionStatus === "downloading" && m.slskdTransferId && m.slskdUsername
+    );
+    if (downloading.length === 0) return;
+
+    let cancelled = false;
+    const interval = setInterval(async () => {
+      if (cancelled) return;
+      const lib = getAllTrackMeta();
+      const active = Object.values(lib).filter(
+        (m) => m.acquisitionStatus === "downloading" && m.slskdTransferId && m.slskdUsername
+      );
+      if (active.length === 0) { clearInterval(interval); return; }
+
+      for (const meta of active) {
+        try {
+          const res = await fetch(
+            `/api/slskd/transfer/${meta.slskdTransferId}?username=${encodeURIComponent(meta.slskdUsername!)}`
+          );
+          if (!res.ok) continue;
+          const data = await res.json();
+
+          if (data.state === "Completed") {
+            setTrackMeta(meta.spotifyId, {
+              acquisitionStatus: "downloaded",
+              localPath: data.filename,
+              downloadProgress: 100,
+              slskdTransferId: undefined,
+              slskdUsername: undefined,
+            });
+          } else if (data.state === "Errored" || data.state === "Cancelled") {
+            setTrackMeta(meta.spotifyId, {
+              acquisitionStatus: "failed",
+              slskdTransferId: undefined,
+              slskdUsername: undefined,
+            });
+          } else {
+            setTrackMeta(meta.spotifyId, { downloadProgress: data.progress });
+          }
+        } catch {
+          // ignore transient errors
+        }
+      }
+      setLibrary(getAllTrackMeta());
+    }, 2000);
+
+    return () => { cancelled = true; clearInterval(interval); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [library]);
+
   if (!set) {
     return (
       <div className="max-w-6xl mx-auto px-4 py-8 text-zinc-500">
@@ -897,11 +1136,15 @@ export default function SetBuilderPage({ params }: Props) {
                   isSelected={selectedSlotId === track.slotId}
                   isPlaying={playingSlotId === track.slotId}
                   playerEnabled={playerEnabled}
+                  searchResults={slskdResults[track.id] ?? null}
+                  isSearching={slskdSearching.has(track.id)}
                   onSelect={(slotId) => setSelectedSlotId((prev) => prev === slotId ? undefined : slotId)}
                   onRemove={removeTrack}
                   onMetaChange={handleMetaChange}
                   onTrackChange={handleTrackChange}
                   onPlay={playTrack}
+                  onFind={() => handleFind(track)}
+                  onDownload={(r) => handleDownload(track, r)}
                 />
               ))}
             </div>

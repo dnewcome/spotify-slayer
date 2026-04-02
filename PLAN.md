@@ -458,6 +458,43 @@ slskd downloads files to its own configured path. Two options:
 Simplest to start: point `MUSIC_DIR` at slskd's download dir, store the full relative path
 as-is from the transfer filename (slskd preserves the remote path structure).
 
+#### File management and ISRC tagging
+
+When a download completes, the app needs to do three things before marking the track
+`"downloaded"`:
+
+1. **Normalize the filename** — rename from slskd's remote path noise (`\\remote\path\01 - rip.flac`)
+   to `Artist - Title.ext` in `MUSIC_DIR`. Keeps the library human-readable and consistent
+   regardless of who uploaded the file.
+
+2. **Embed ISRC in the audio tags** — the app already has the ISRC from Spotify at download
+   time; write it into the file so the file is self-describing. Tag location by format:
+
+   | Format | Mechanism | Field |
+   |--------|-----------|-------|
+   | FLAC | Vorbis comment | `ISRC=...` |
+   | MP3 | ID3v2 | `TSRC` frame |
+   | WAV | ID3v2 embedded in RIFF `id3 ` chunk | `TSRC` frame |
+
+   Writing: `node-id3` handles MP3 and WAV; shell out to `metaflac --set-tag` for FLAC.
+   Reading (for scan/recovery): `music-metadata` npm reads all three uniformly.
+
+   Rekordbox bonus: reads `TSRC` from MP3/FLAC natively — cue points round-trip
+   without needing a separate title+artist match.
+
+3. **Store `localPath`** — relative path from `MUSIC_DIR` root, e.g. `Artist - Title.flac`.
+   This is the fast path used on every playback request.
+
+**Recovery: `POST /api/library/scan`**
+
+If localStorage is wiped (new device, browser reset), the ISRC tag in the file is the
+fallback. A scan route walks `MUSIC_DIR`, reads ISRC from each file's tags via
+`music-metadata`, and rebuilds `localPath` in the metadata store for any track whose ISRC
+matches. Tracks with no ISRC tag fall back to fuzzy title+artist match.
+
+This route also serves as the initial import path if the user already has a local music
+library they want to associate with existing Spotify tracks.
+
 #### Progress polling: client-side vs SSE
 
 Simple option (start here): client polls `/api/slskd/transfer/:id` every 2s when a track
