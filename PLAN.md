@@ -2,18 +2,23 @@
 
 ## Current State
 
-Working Next.js app with Spotify OAuth. Users can browse playlists, view tracks, and build DJ sets stored in localStorage. Auth, playlist browsing, track listing, set CRUD, and drag-and-drop reordering are fully functional.
+Working Next.js app with Spotify OAuth. Users can browse playlists, search, view tracks, and build DJ sets stored in localStorage. Auth, playlist browsing, track listing, set CRUD, drag-and-drop reordering, in/out points, energy/busyness tagging, arc bar visualization, and MusicBrainz enrichment are fully functional.
 
 ### Existing files
-- `src/lib/types.ts` — `DJSet`, `DJSetTrack`
-- `src/lib/sets.ts` — localStorage CRUD for sets, `spotifyTrackToDJSetTrack`, duration helpers
+- `src/lib/types.ts` — `DJSet`, `DJSetTrack`, `TrackMetadata`, `CuePoint` (planned)
+- `src/lib/sets.ts` — localStorage CRUD for sets, `spotifyTrackToDJSetTrack`, duration helpers (`totalDuration`, `onAirDuration`, `activeDurationMs`)
+- `src/lib/library.ts` — localStorage track metadata library keyed by Spotify ID (`getTrackMeta`, `setTrackMeta`, `getAllTrackMeta`)
 - `src/lib/spotify.ts` — Spotify API wrapper, `SpotifyTrack`, `SpotifyPlaylist` types
 - `src/lib/auth.ts` — NextAuth config
-- `src/app/sets/[id]/page.tsx` — set builder with dnd-kit drag-and-drop
+- `src/app/api/enrich/route.ts` — MusicBrainz enrichment via ISRC (recording + artist genres/tags)
+- `src/app/api/search/route.ts` — Spotify search proxy
+- `src/app/sets/[id]/page.tsx` — set builder: dnd-kit, in/out points, energy/busyness dot selectors, arc bar, auto-enrichment
 - `src/app/sets/page.tsx` — set list management
+- `src/app/search/page.tsx` — search UI
 - `src/app/playlists/[id]/PlaylistDetail.tsx` — playlist view with "Add to set" button
 - `src/components/AddToSetModal.tsx` — modal to pick which set to add a track to
 - `src/components/TrackRow.tsx` — reusable track row component
+- `src/components/RecentlyPlayed.tsx` — recently played tracks
 
 ---
 
@@ -43,7 +48,7 @@ This app owns all five of those steps.
 
 ## Feature Roadmap
 
-### Phase 1 — Active Set Builder ✓ (mostly done)
+### Phase 1 — Active Set Builder ✓
 - Set list management (create, rename, delete) ✓
 - Add tracks from playlists via modal ✓
 - Drag-and-drop reorder ✓
@@ -52,9 +57,14 @@ This app owns all five of those steps.
 - Export as Spotify playlist (todo — API already wired)
 - Export as plain text tracklist (todo)
 
-### Phase 2 — Track Library, Metadata & Visualization (next)
-
-See detailed implementation plan below.
+### Phase 2 — Track Library, Metadata & Visualization ✓
+- `TrackMetadata` type + `src/lib/library.ts` localStorage store ✓
+- `DJSetTrack` in/out points (`inPoint`, `outPoint`) ✓
+- Energy + busyness dot selectors on each track row ✓
+- `SetArcBar` — proportional color strip using `activeDurationMs` (in/out-aware) ✓
+- MusicBrainz enrichment via ISRC (recording + artist genres/tags, auto-runs on set load) ✓
+- Genre pills on track rows from MusicBrainz ✓
+- On-air duration display (sum of active regions) ✓
 
 ### Phase 2.5 — Cue Points & Track EDL
 
@@ -434,7 +444,7 @@ its endpoints to trigger downloads and query status. No need to touch its intern
 
 ---
 
-## Phase 2 — Detailed Implementation Plan
+## Phase 2 — Implementation Notes (completed)
 
 ### 2a. Track metadata library (localStorage)
 

@@ -32,31 +32,27 @@ export default function RecentlyPlayed({ items }: Props) {
 
     const isrc = pendingTrack.external_ids?.isrc;
     const spotifyId = pendingTrack.id;
-    if (isrc) {
-      fetch("/api/enrich", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ isrc, spotifyId }),
+    fetch("/api/enrich", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ isrc, spotifyId }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (!data.error) {
+          setTrackMeta(spotifyId, {
+            spotifyId,
+            isrc: data.isrc,
+            mbid: data.mbid,
+            genre: data.genres,
+            tags: data.tags,
+            mbEnriched: true,
+          });
+        } else {
+          setTrackMeta(spotifyId, { spotifyId, mbEnriched: true });
+        }
       })
-        .then((r) => r.json())
-        .then((data) => {
-          if (!data.error) {
-            setTrackMeta(spotifyId, {
-              spotifyId,
-              isrc,
-              mbid: data.mbid,
-              genre: data.genres,
-              tags: data.tags,
-              mbEnriched: true,
-            });
-          } else {
-            setTrackMeta(spotifyId, { spotifyId, isrc, mbEnriched: true });
-          }
-        })
-        .catch(() => {});
-    } else {
-      setTrackMeta(spotifyId, { spotifyId, mbEnriched: true });
-    }
+      .catch(() => {});
 
     setPendingTrack(null);
     setTimeout(() => setToast(null), 3000);
