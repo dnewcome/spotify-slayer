@@ -23,6 +23,8 @@ import { getSet, saveSet, deleteSet, totalDuration, onAirDuration, hasInOutPoint
 import { getAllTrackMeta, setTrackMeta } from "@/lib/library";
 import { DJSet, DJSetTrack, TrackMetadata, SlskdResult } from "@/lib/types";
 import { exportSetAsJson } from "@/lib/importExport";
+import { slskdSearch, slskdPollSearch, slskdDownload, slskdPollTransfer, slskdCancelTransfer } from "@/lib/slskd";
+import { isSlskdConfigured } from "@/lib/slskdSettings";
 import { useSpotifyPlayer } from "@/lib/useSpotifyPlayer";
 import Link from "next/link";
 
@@ -509,7 +511,8 @@ function SortableTrackRow({
           // Show find button unless actively in-progress or already on disk.
           // "found" with no in-memory results (e.g. after page reload) also re-shows find.
           const hasResults = searchResults !== null && searchResults !== undefined;
-          const showFind = !isSearching
+          const showFind = isSlskdConfigured()
+            && !isSearching
             && status !== "downloading"
             && status !== "downloaded"
             && (!hasResults || status === "failed" || !status);
@@ -987,20 +990,13 @@ export default function SetBuilderPage({ params }: Props) {
     handleMetaChange(id, { acquisitionStatus: "searching" });
 
     try {
-      const startRes = await fetch("/api/slskd/search", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ artist: track.artists[0] ?? "", title: track.name }),
-      });
-      const { searchId } = await startRes.json();
-      if (!searchId) throw new Error("no searchId");
+      const { searchId } = await slskdSearch(track.artists[0] ?? "", track.name);
 
       // Poll until done
       let results: SlskdResult[] = [];
       for (let i = 0; i < 20; i++) {
         await new Promise((r) => setTimeout(r, 1500));
-        const pollRes = await fetch(`/api/slskd/search/${searchId}`);
-        const pollData = await pollRes.json();
+        const pollData = await slskdPollSearch(searchId);
         results = pollData.results ?? [];
         if (pollData.done) break;
       }
@@ -1023,10 +1019,7 @@ export default function SetBuilderPage({ params }: Props) {
       setLibrary(getAllTrackMeta());
       return;
     }
-    await fetch(
-      `/api/slskd/transfer/${meta.slskdTransferId}?username=${encodeURIComponent(meta.slskdUsername)}`,
-      { method: "DELETE" }
-    ).catch(() => {}); // best-effort
+    await slskdCancelTransfer(meta.slskdTransferId, meta.slskdUsername);
     setTrackMeta(spotifyId, {
       acquisitionStatus: undefined,
       downloadProgress: undefined,
@@ -1042,14 +1035,7 @@ export default function SetBuilderPage({ params }: Props) {
     handleMetaChange(id, { acquisitionStatus: "downloading", downloadProgress: 0 });
 
     try {
-      const res = await fetch("/api/slskd/download", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: result.username, filename: result.filename, size: result.size }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.transferId) throw new Error(data.error ?? "download failed");
-
+      const data = await slskdDownload(result.username, result.filename, result.size);
       handleMetaChange(id, { slskdTransferId: data.transferId, slskdUsername: data.username });
     } catch (err) {
       console.error("[download]", err);
@@ -1075,11 +1061,12 @@ export default function SetBuilderPage({ params }: Props) {
 
       for (const meta of active) {
         try {
-          const res = await fetch(
-            `/api/slskd/transfer/${meta.slskdTransferId}?username=${encodeURIComponent(meta.slskdUsername!)}`
-          );
-          if (!res.ok) continue;
-          const data = await res.json();
+          let data;
+          try {
+            data = await slskdPollTransfer(meta.slskdTransferId!, meta.slskdUsername!);
+          } catch {
+            continue;
+          }
 
           if (data.state === "Completed") {
             // Normalize: move from slskd downloads dir to MUSIC_DIR with clean filename + tags

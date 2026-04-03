@@ -13,6 +13,7 @@ export default function Nav() {
     { href: "/playlists", label: "Playlists" },
     { href: "/sets", label: "DJ Sets" },
     { href: "/search", label: "Search" },
+    { href: "/settings", label: "Settings" },
   ];
 
   return (
