@@ -1220,7 +1220,7 @@ export default function SetBuilderPage({ params }: Props) {
                 </button>
                 <button
                   onClick={() => exportSetAsJson(set, getAllTrackMeta())}
-                  title="Export as Spotify Slayer JSON (for sharing between users)"
+                  title="Export as DJ Set Builder JSON (for sharing between users)"
                   className="text-xs px-2 py-1 rounded border transition-colors border-zinc-700 text-zinc-500 hover:text-zinc-300"
                 >
                   .json

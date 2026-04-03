@@ -10,7 +10,7 @@ const geistSans = Geist({
 });
 
 export const metadata: Metadata = {
-  title: "Spotify Slayer",
+  title: "DJ Set Builder",
   description: "DJ set builder powered by Spotify",
 };
 

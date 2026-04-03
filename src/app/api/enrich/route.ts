@@ -3,7 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 
 const MB_BASE = "https://musicbrainz.org/ws/2";
-const MB_USER_AGENT = "SpotifySlayer/1.0 (spotify-slayer-local)";
+const MB_USER_AGENT = "DJSetBuilder/1.0 (dj-set-builder)";
 
 async function mbFetch(path: string) {
   const res = await fetch(`${MB_BASE}${path}`, {

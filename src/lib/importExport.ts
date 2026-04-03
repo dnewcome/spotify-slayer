@@ -19,7 +19,7 @@ export interface PortableTrackMetadata {
 }
 
 export interface DJSetExport {
-  app: "spotify-slayer";
+  app: "dj-set-builder";
   version: string;
   exportedAt: string;
   set: DJSet;
@@ -53,7 +53,7 @@ export function exportSetAsJson(
   }
 
   const payload: DJSetExport = {
-    app: "spotify-slayer",
+    app: "dj-set-builder",
     version: FORMAT_VERSION,
     exportedAt: new Date().toISOString(),
     set,
@@ -66,7 +66,7 @@ export function exportSetAsJson(
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `${set.name}.sslayer.json`;
+  a.download = `${set.name}.djset.json`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -90,7 +90,7 @@ export async function importSetFromJson(file: File): Promise<ImportResult> {
   if (
     typeof payload !== "object" ||
     payload === null ||
-    (payload as DJSetExport).app !== "spotify-slayer" ||
+    (payload as DJSetExport).app !== "dj-set-builder" ||
     !(payload as DJSetExport).set ||
     !(payload as DJSetExport).trackMetadata
   ) {

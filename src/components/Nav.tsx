@@ -21,7 +21,7 @@ export default function Nav() {
       <div className="max-w-6xl mx-auto px-4 flex items-center justify-between h-14">
         <div className="flex items-center gap-6">
           <Link href="/" className="text-green-400 font-bold text-lg tracking-tight">
-            Spotify Slayer
+            DJ Set Builder
           </Link>
           <div className="flex items-center gap-1">
             {links.map((l) => (

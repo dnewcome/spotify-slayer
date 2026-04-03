@@ -37,7 +37,7 @@ export function useSpotifyPlayer(enabled: boolean) {
 
     function initPlayer() {
       const player = new window.Spotify.Player({
-        name: "Spotify Slayer",
+        name: "DJ Set Builder",
         getOAuthToken: (cb) => cb(tokenRef.current),
         volume: 0.8,
       });
