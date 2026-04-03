@@ -61,16 +61,21 @@ export default function SettingsPage() {
           </a>{" "}
           instance to enable Soulseek downloads. The app talks to slskd directly from your browser — your files never touch this server.
         </p>
-        <p className="text-sm text-zinc-500 mb-5">
-          You'll need to add this site's origin to slskd's CORS config in{" "}
-          <code className="text-zinc-300 bg-zinc-800 px-1 rounded">appsettings.yml</code>:
+        <p className="text-sm text-zinc-500 mb-4">
+          slskd has no built-in CORS support, so your browser will be blocked from reaching it directly unless you put a reverse proxy in front that adds the right headers. A minimal Caddy config works well:
         </p>
-        <pre className="text-xs bg-zinc-900 border border-zinc-800 rounded-lg p-3 mb-5 text-zinc-300 overflow-x-auto">
-{`web:
-  cors:
-    origins:
-      - ${typeof window !== "undefined" ? window.location.origin : "https://your-app.example.com"}`}
+        <pre className="text-xs bg-zinc-900 border border-zinc-800 rounded-lg p-3 mb-4 text-zinc-300 overflow-x-auto">
+{`# Caddyfile
+localhost:5031 {
+  header Access-Control-Allow-Origin "${typeof window !== "undefined" ? window.location.origin : "https://your-app.example.com"}"
+  header Access-Control-Allow-Headers "X-API-Key, Content-Type"
+  header Access-Control-Allow-Methods "GET, POST, DELETE, OPTIONS"
+  reverse_proxy localhost:5030
+}`}
         </pre>
+        <p className="text-sm text-zinc-500 mb-5">
+          Then point the URL below at the proxy port (<code className="text-zinc-300 bg-zinc-800 px-1 rounded">http://localhost:5031</code>) instead of slskd directly.
+        </p>
 
         <div className="flex flex-col gap-3">
           <div>
